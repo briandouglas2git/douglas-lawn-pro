@@ -1,32 +1,9 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Navigation, MapPin, CheckCircle2, Phone, User, Wrench, Clock, Timer } from "lucide-react";
 import { use } from "react";
-
-const SAMPLE_JOBS: Record<string, {
-  customerName: string;
-  customerPhone: string;
-  customerId: string;
-  address: string;
-  service: string;
-  date: string;
-  time: string;
-  notes: string;
-  status: "scheduled" | "en_route" | "arrived" | "completed";
-}> = {
-  "job1": {
-    customerName:  "John Miller",
-    customerPhone: "(519) 555-0101",
-    customerId:    "1",
-    address:       "12 Elm St, Paris ON",
-    service:       "Weekly Mowing",
-    date:          "2026-05-02",
-    time:          "9:00 AM",
-    notes:         "Gate code: 1234. Dogs in backyard.",
-    status:        "scheduled",
-  },
-};
+import { getJob, updateJobStatus, type Job } from "@/lib/jobs";
 
 const STATUS_LABELS = {
   scheduled:  { label: "Scheduled",  bg: "#F5ECD7", color: "#A07840" },
@@ -59,26 +36,34 @@ function LiveTimer({ startedAt }: { startedAt: number }) {
 
 export default function JobDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const initial = SAMPLE_JOBS[id];
 
-  const [status,      setStatus]      = useState<Status>(initial?.status ?? "scheduled");
-  const [sending,     setSending]     = useState(false);
-  const [toast,       setToast]       = useState("");
+  const [job,          setJob]          = useState<Job | null>(null);
+  const [status,       setStatus]       = useState<Status>("scheduled");
+  const [sending,      setSending]      = useState(false);
+  const [toast,        setToast]        = useState("");
   const [dispatchedAt, setDispatchedAt] = useState<number | null>(null);
   const [arrivedAt,    setArrivedAt]    = useState<number | null>(null);
   const [completedAt,  setCompletedAt]  = useState<number | null>(null);
 
-  // Snapshot durations once a phase ends so display stays stable
+  useEffect(() => {
+    getJob(id).then(found => {
+      setJob(found);
+      if (found) setStatus(found.status as Status);
+    });
+  }, [id]);
+
   const travelDuration = arrivedAt && dispatchedAt ? Math.floor((arrivedAt - dispatchedAt) / 1000) : null;
   const jobDuration    = completedAt && arrivedAt  ? Math.floor((completedAt - arrivedAt) / 1000)   : null;
 
-  if (!initial) {
+  if (!job) {
     return (
       <div className="p-4">
         <p className="text-[#6b7280]">Job not found.</p>
       </div>
     );
   }
+
+  const initial = job;
 
   async function notify(type: "dispatch" | "arrive") {
     setSending(true);
@@ -101,18 +86,21 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
   async function handleDispatch() {
     setDispatchedAt(Date.now());
     setStatus("en_route");
+    updateJobStatus(id, "en_route");
     await notify("dispatch");
   }
 
   async function handleArrive() {
     setArrivedAt(Date.now());
     setStatus("arrived");
+    updateJobStatus(id, "arrived");
     await notify("arrive");
   }
 
   function handleComplete() {
     setCompletedAt(Date.now());
     setStatus("completed");
+    updateJobStatus(id, "completed");
   }
 
   const badge = STATUS_LABELS[status];

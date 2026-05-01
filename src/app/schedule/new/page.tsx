@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Check } from "lucide-react";
 import { Suspense } from "react";
+import { saveJob } from "@/lib/jobs";
 
 const CUSTOMERS: Record<string, string> = {
   "1": "John Miller",
@@ -34,10 +35,22 @@ function NewJobForm() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!customerId || !serviceType || !date) return;
-    // Will save to Supabase in a future phase
+    const customer = CUSTOMERS[customerId];
+    await saveJob({
+      customerName:  customer,
+      customerId,
+      customerPhone: "",
+      address:       "",
+      service:       serviceType,
+      date,
+      time,
+      notes,
+      status:        "scheduled",
+      isPlan:        false,
+    });
     setSubmitted(true);
     setTimeout(() => router.push("/schedule"), 1500);
   }

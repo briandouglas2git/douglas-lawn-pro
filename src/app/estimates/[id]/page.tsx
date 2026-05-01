@@ -1,13 +1,17 @@
 "use client";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import { use } from "react";
 import {
   ArrowLeft, User, CalendarDays, CreditCard, Check,
-  ChevronDown, ChevronUp, Send, Clock
+  ChevronDown, ChevronUp, Send, Clock, Repeat, Lock,
 } from "lucide-react";
+import SignaturePad from "@/components/SignaturePad";
+import { saveJob, saveJobs, type Job } from "@/lib/jobs";
 
+// ── Sample data ───────────────────────────────────────────────────────────────
 const SAMPLE_ESTIMATES: Record<string, {
+  isPlan: boolean;
   customerName: string;
   customerId: string;
   customerPhone: string;
@@ -18,113 +22,166 @@ const SAMPLE_ESTIMATES: Record<string, {
   status: string;
 }> = {
   "est1": {
+    isPlan:        false,
     customerName:  "John Miller",
     customerId:    "1",
     customerPhone: "(519) 555-0101",
     description:   "Spring cleanup + fertilization",
     items: [
-      { description: "Spring Cleanup",    qty: 1, price: 150 },
+      { description: "Spring Cleanup",     qty: 1, price: 150 },
       { description: "Lawn Fertilization", qty: 1, price: 85  },
-      { description: "Edge Trimming",     qty: 1, price: 50  },
+      { description: "Edge Trimming",      qty: 1, price: 50  },
     ],
     notes:      "Includes removal of all debris. Gate access required.",
     expiryDate: "May 15, 2026",
     status:     "Sent",
   },
   "est2": {
+    isPlan:        true,
     customerName:  "Sarah Thompson",
     customerId:    "2",
     customerPhone: "(519) 555-0182",
-    description:   "Full lawn care package",
+    description:   "23-Week Lawn Care Plan",
     items: [
-      { description: "Weekly Mowing (monthly)", qty: 4,  price: 65  },
-      { description: "Fertilization",           qty: 1,  price: 85  },
-      { description: "Hedge Trimming",          qty: 1,  price: 75  },
+      { description: "Weekly Mowing (per cut)", qty: 23, price: 65 },
     ],
-    notes:      "Monthly billing available. First cut includes full edge cleanup.",
-    expiryDate: "May 20, 2026",
+    notes:      "Includes 23 weekly cuts. Auto-invoiced after each completed cut. Card on file required.",
+    expiryDate: "",
     status:     "Draft",
   },
 };
 
-const SERVICE_TYPES = [
-  "Weekly Mowing", "Bi-Weekly Mowing", "Spring Cleanup", "Fall Cleanup",
-  "Lawn Fertilization", "Hedge Trimming", "Full Lawn Care Package", "Other",
-];
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function generateWeeklyDates(startDate: string, count: number): string[] {
+  const dates: string[] = [];
+  const d = new Date(startDate + "T12:00:00");
+  for (let i = 0; i < count; i++) {
+    dates.push(d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" }));
+    d.setDate(d.getDate() + 7);
+  }
+  return dates;
+}
 
 type BookingMode = null | "now" | "later";
 
+// ── Main component ────────────────────────────────────────────────────────────
 export default function EstimateDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const est = SAMPLE_ESTIMATES[id];
+  const est    = SAMPLE_ESTIMATES[id];
 
-  const [bookingMode, setBookingMode] = useState<BookingMode>(null);
-  const [date,        setDate]        = useState("");
-  const [time,        setTime]        = useState("");
-  const [deposit,     setDeposit]     = useState("");
-  const [booked,      setBooked]      = useState(false);
-  const [sending,     setSending]     = useState(false);
-  const [toast,       setToast]       = useState("");
+  const [bookingMode,   setBookingMode]   = useState<BookingMode>(null);
+  const [startDate,     setStartDate]     = useState("");
+  const [time,          setTime]          = useState("");
+  const [deposit,       setDeposit]       = useState("");
+  const [signature,     setSignature]     = useState<string | null>(null);
+  const [cardNumber,    setCardNumber]    = useState("");
+  const [cardExpiry,    setCardExpiry]    = useState("");
+  const [cardCvc,       setCardCvc]       = useState("");
+  const [showAllDates,  setShowAllDates]  = useState(false);
+  const [booked,        setBooked]        = useState(false);
+  const [sending,       setSending]       = useState(false);
+  const [toast,         setToast]         = useState("");
 
-  if (!est) {
-    return <div className="p-4"><p className="text-[#6b7280]">Estimate not found.</p></div>;
-  }
+  const handleSig = useCallback((v: string | null) => setSignature(v), []);
 
-  const total = est.items.reduce((sum, i) => sum + i.qty * i.price, 0);
+  if (!est) return <div className="p-4"><p className="text-[#6b7280]">Estimate not found.</p></div>;
+
+  const total       = est.items.reduce((sum, i) => sum + i.qty * i.price, 0);
+  const perCut      = est.isPlan ? est.items[0].price : 0;
+  const totalCuts   = est.isPlan ? est.items[0].qty   : 0;
+  const scheduledDates = est.isPlan && startDate ? generateWeeklyDates(startDate, totalCuts) : [];
+  const previewDates   = showAllDates ? scheduledDates : scheduledDates.slice(0, 4);
 
   async function sendEstimate() {
     setSending(true);
     try {
-      const res = await fetch("/api/notify", {
+      const res  = await fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "estimate",
-          customerName:  est.customerName,
-          customerPhone: est.customerPhone,
-          total,
-        }),
+        body: JSON.stringify({ type: "estimate", customerName: est.customerName, customerPhone: est.customerPhone, total }),
       });
       const data = await res.json();
-      setToast(data.preview ? `Preview: "${data.message}"` : "Estimate sent to customer!");
-    } catch {
-      setToast("Could not send.");
-    } finally {
-      setSending(false);
-      setTimeout(() => setToast(""), 5000);
-    }
+      setToast(data.preview ? `Preview: "${data.message}"` : "Estimate sent!");
+    } catch { setToast("Could not send."); }
+    finally { setSending(false); setTimeout(() => setToast(""), 5000); }
   }
 
-  function handleBook(e: React.FormEvent) {
+  async function handleBook(e: React.FormEvent) {
     e.preventDefault();
-    if (!date) return;
+    if (!startDate) return;
+    if (est.isPlan && (!signature || !cardNumber)) return;
+
+    const customer = {
+      customerName:  est.customerName,
+      customerId:    est.customerId,
+      customerPhone: est.customerPhone,
+      address:       "",
+    };
+
+    if (est.isPlan) {
+      const d = new Date(startDate + "T12:00:00");
+      const planJobs: Omit<Job, "id">[] = Array.from({ length: totalCuts }, (_, i) => {
+        const jobDate = new Date(d);
+        jobDate.setDate(jobDate.getDate() + i * 7);
+        return {
+          ...customer,
+          service:       est.items[0].description,
+          date:          jobDate.toISOString().split("T")[0],
+          time:          time || "",
+          notes:         est.notes,
+          status:        "scheduled" as const,
+          isPlan:        true,
+          planCutNumber: i + 1,
+          planTotalCuts: totalCuts,
+          pricePerCut:   perCut,
+        };
+      });
+      await saveJobs(planJobs);
+    } else {
+      await saveJob({
+        ...customer,
+        service:  est.description,
+        date:     startDate,
+        time:     time || "",
+        notes:    est.notes,
+        status:   "scheduled" as const,
+        isPlan:   false,
+      });
+    }
+
     setBooked(true);
   }
 
+  // ── Success screen ────────────────────────────────────────────────────────
   if (booked) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-4">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-4 text-center">
         <div className="w-16 h-16 rounded-full bg-[#F5ECD7] flex items-center justify-center">
           <Check size={32} color="#A07840" strokeWidth={2.5} />
         </div>
-        <p className="text-lg font-bold text-[#1a1a1a]">Job Booked!</p>
-        <p className="text-sm text-[#6b7280] text-center">
-          {bookingMode === "now"
-            ? `Payment of $${Number(deposit || 0).toFixed(2)} collected. Job scheduled for ${date}.`
-            : `Job scheduled for ${date}. Payment due on completion.`}
+        <p className="text-lg font-bold text-[#1a1a1a]">
+          {est.isPlan ? "Plan Activated!" : "Job Booked!"}
+        </p>
+        <p className="text-sm text-[#6b7280] max-w-xs">
+          {est.isPlan
+            ? `${totalCuts} weekly cuts scheduled starting ${startDate}. You'll be auto-invoiced $${perCut.toFixed(2)} after each completed cut.`
+            : bookingMode === "now"
+              ? `Payment of $${Number(deposit || total).toFixed(2)} collected. Scheduled for ${startDate}.`
+              : `Scheduled for ${startDate}. Payment due on completion.`}
         </p>
         <div className="flex gap-3 mt-2">
           <Link href="/schedule" className="bg-[#C9A96E] text-white rounded-2xl px-5 py-3 text-sm font-semibold">
             View Schedule
           </Link>
           <Link href="/estimates" className="bg-white border border-[#ede8df] text-[#A07840] rounded-2xl px-5 py-3 text-sm font-semibold">
-            Back to Estimates
+            Estimates
           </Link>
         </div>
       </div>
     );
   }
 
+  // ── Main view ─────────────────────────────────────────────────────────────
   return (
     <div className="p-4">
       {/* Header */}
@@ -134,7 +191,9 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </Link>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-[#1a1a1a]">{est.description}</h1>
-          <span className="text-xs font-semibold text-[#B45309]">{est.status}</span>
+          {est.isPlan
+            ? <span className="text-xs font-semibold text-[#A07840] flex items-center gap-1"><Repeat size={11} /> Seasonal Plan</span>
+            : <span className="text-xs font-semibold text-[#B45309]">{est.status}</span>}
         </div>
       </div>
 
@@ -146,24 +205,43 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </Link>
       </div>
 
-      {/* Line items */}
+      {/* Scope / line items */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
-        <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">Scope of Work</p>
-        <div className="flex flex-col gap-2">
-          {est.items.map((item, i) => (
-            <div key={i} className="flex items-center justify-between text-sm">
-              <span className="text-[#1a1a1a]">{item.description} {item.qty > 1 ? `×${item.qty}` : ""}</span>
-              <span className="font-semibold text-[#A07840]">${(item.qty * item.price).toFixed(2)}</span>
+        <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">
+          {est.isPlan ? "Plan Details" : "Scope of Work"}
+        </p>
+        {est.isPlan ? (
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-[#6b7280]">Cuts per season</span>
+              <span className="font-semibold text-[#1a1a1a]">{totalCuts} weeks</span>
             </div>
-          ))}
-        </div>
+            <div className="flex justify-between">
+              <span className="text-[#6b7280]">Price per cut</span>
+              <span className="font-semibold text-[#1a1a1a]">${perCut.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[#6b7280]">Billing</span>
+              <span className="font-semibold text-[#1a1a1a]">Auto after each cut</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {est.items.map((item, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-[#1a1a1a]">{item.description}{item.qty > 1 ? ` ×${item.qty}` : ""}</span>
+                <span className="font-semibold text-[#A07840]">${(item.qty * item.price).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="border-t border-[#ede8df] mt-3 pt-3 flex items-center justify-between">
-          <span className="text-sm font-bold text-[#1a1a1a]">Total</span>
+          <span className="text-sm font-bold text-[#1a1a1a]">{est.isPlan ? "Season Total" : "Total"}</span>
           <span className="text-lg font-bold text-[#A07840]">${total.toFixed(2)}</span>
         </div>
         {est.expiryDate && (
           <p className="text-xs text-[#6b7280] mt-2 flex items-center gap-1">
-            <Clock size={11} /> Quote valid until {est.expiryDate}
+            <Clock size={11} /> Valid until {est.expiryDate}
           </p>
         )}
       </div>
@@ -183,127 +261,202 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      {/* Send to customer */}
-      <button
-        onClick={sendEstimate}
-        disabled={sending}
-        className="w-full bg-white border border-[#C9A96E] text-[#A07840] rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 mb-3 active:scale-95 transition-transform disabled:opacity-60"
-      >
-        <Send size={16} />
-        {sending ? "Sending…" : "Send Estimate to Customer"}
+      {/* Send button */}
+      <button onClick={sendEstimate} disabled={sending}
+        className="w-full bg-white border border-[#C9A96E] text-[#A07840] rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 mb-3 active:scale-95 transition-transform disabled:opacity-60">
+        <Send size={16} /> {sending ? "Sending…" : "Send Estimate to Customer"}
       </button>
 
-      {/* ── BOOKING OPTIONS ─────────────────────── */}
       <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide text-center mb-3">
-        Book This Job
+        {est.isPlan ? "Activate Plan" : "Book This Job"}
       </p>
 
-      {/* Book with payment now */}
-      <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm mb-3 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setBookingMode(bookingMode === "now" ? null : "now")}
-          className="w-full flex items-center justify-between p-4 text-left"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
-              <CreditCard size={18} color="#A07840" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-[#1a1a1a]">Book with Payment Now</p>
-              <p className="text-xs text-[#6b7280]">Collect a deposit or full payment</p>
+      {/* ── PLAN BOOKING ─────────────────────────────────────────────────── */}
+      {est.isPlan ? (
+        <form onSubmit={handleBook} className="flex flex-col gap-4">
+
+          {/* Start date + schedule preview */}
+          <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
+            <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">First Cut Date *</label>
+            <input type="date" value={startDate} required onChange={e => setStartDate(e.target.value)}
+              className="mt-2 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+
+            {scheduledDates.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 flex items-center gap-1">
+                  <CalendarDays size={11} /> {totalCuts} Scheduled Cuts
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {previewDates.map((d, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="text-[#6b7280]">Cut {i + 1}</span>
+                      <span className="font-medium text-[#1a1a1a]">{d}</span>
+                      <span className="text-[#A07840] font-semibold">${perCut.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {scheduledDates.length > 4 && (
+                    <button type="button" onClick={() => setShowAllDates(v => !v)}
+                      className="text-xs text-[#C9A96E] font-semibold mt-1 flex items-center gap-1 self-center">
+                      {showAllDates ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show all {totalCuts} dates</>}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Signature */}
+          <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
+            <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-1">Customer Signature *</p>
+            <p className="text-xs text-[#6b7280] mb-3">
+              By signing, customer authorizes Douglas Landscaping Co. to perform the services listed and charge the card on file after each completed cut.
+            </p>
+            <SignaturePad onChange={handleSig} />
+            {!signature && (
+              <p className="text-xs text-red-400 mt-1">Signature required to activate plan</p>
+            )}
+          </div>
+
+          {/* Card on file */}
+          <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
+            <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-1 flex items-center gap-1.5">
+              <Lock size={11} /> Card on File *
+            </p>
+            <p className="text-xs text-[#6b7280] mb-3">Charged ${perCut.toFixed(2)} automatically after each completed cut.</p>
+            <div className="flex flex-col gap-2">
+              <input
+                type="text" placeholder="Card number" value={cardNumber} maxLength={19} required
+                onChange={e => {
+                  const v = e.target.value.replace(/\D/g, "").slice(0, 16);
+                  setCardNumber(v.replace(/(.{4})/g, "$1 ").trim());
+                }}
+                className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E] font-mono tracking-widest"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="text" placeholder="MM / YY" value={cardExpiry} maxLength={7} required
+                  onChange={e => {
+                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                    setCardExpiry(v.length > 2 ? v.slice(0, 2) + " / " + v.slice(2) : v);
+                  }}
+                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]"
+                />
+                <input
+                  type="text" placeholder="CVC" value={cardCvc} maxLength={3} required
+                  onChange={e => setCardCvc(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]"
+                />
+              </div>
+              <p className="text-[10px] text-[#6b7280] flex items-center gap-1">
+                <Lock size={9} /> Card details will be stored securely via Stripe when connected.
+              </p>
             </div>
           </div>
-          {bookingMode === "now" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
-        </button>
 
-        {bookingMode === "now" && (
-          <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
-            <div>
-              <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Job Date *</label>
-              <input
-                type="date" value={date} required
-                onChange={e => setDate(e.target.value)}
-                className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Time</label>
-              <input
-                type="time" value={time}
-                onChange={e => setTime(e.target.value)}
-                className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Amount Collected ($)</label>
-              <input
-                type="number" min={0} step={0.01}
-                value={deposit} placeholder={total.toFixed(2)}
-                onChange={e => setDeposit(e.target.value)}
-                className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
-              <p className="text-[10px] text-[#6b7280] mt-1">Leave blank to use full estimate total</p>
-            </div>
-            <button
-              type="submit"
-              className="bg-[#A07840] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform"
-            >
-              <CreditCard size={16} /> Confirm Payment & Book Job
+          <button type="submit" disabled={!signature || !cardNumber || !startDate}
+            className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40 flex items-center justify-center gap-2">
+            <Repeat size={16} /> Activate 23-Week Plan
+          </button>
+        </form>
+
+      ) : (
+        // ── ONE-OFF BOOKING ───────────────────────────────────────────────
+        <>
+          {/* Book with payment now */}
+          <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm mb-3 overflow-hidden">
+            <button type="button" onClick={() => setBookingMode(bookingMode === "now" ? null : "now")}
+              className="w-full flex items-center justify-between p-4 text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
+                  <CreditCard size={18} color="#A07840" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[#1a1a1a]">Book with Payment Now</p>
+                  <p className="text-xs text-[#6b7280]">Collect a deposit or full payment</p>
+                </div>
+              </div>
+              {bookingMode === "now" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
             </button>
-          </form>
-        )}
-      </div>
 
-      {/* Book for later */}
-      <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setBookingMode(bookingMode === "later" ? null : "later")}
-          className="w-full flex items-center justify-between p-4 text-left"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
-              <CalendarDays size={18} color="#A07840" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-[#1a1a1a]">Book for a Later Date</p>
-              <p className="text-xs text-[#6b7280]">Schedule now, collect payment on completion</p>
-            </div>
+            {bookingMode === "now" && (
+              <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Job Date *</label>
+                  <input type="date" value={startDate} required onChange={e => setStartDate(e.target.value)}
+                    className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Time</label>
+                  <input type="time" value={time} onChange={e => setTime(e.target.value)}
+                    className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Amount Collected ($)</label>
+                  <input type="number" min={0} step={0.01} value={deposit} placeholder={total.toFixed(2)}
+                    onChange={e => setDeposit(e.target.value)}
+                    className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+                </div>
+
+                {/* Signature for one-off too */}
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 block">Customer Signature</label>
+                  <SignaturePad onChange={handleSig} />
+                </div>
+
+                <button type="submit"
+                  className="bg-[#A07840] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                  <CreditCard size={16} /> Confirm Payment & Book
+                </button>
+              </form>
+            )}
           </div>
-          {bookingMode === "later" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
-        </button>
 
-        {bookingMode === "later" && (
-          <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
-            <div>
-              <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Job Date *</label>
-              <input
-                type="date" value={date} required
-                onChange={e => setDate(e.target.value)}
-                className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Time</label>
-              <input
-                type="time" value={time}
-                onChange={e => setTime(e.target.value)}
-                className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
-            </div>
-            <div className="bg-[#FAFAF7] rounded-xl p-3 text-xs text-[#6b7280]">
-              Payment of <span className="font-semibold text-[#A07840]">${total.toFixed(2)}</span> will be collected on completion.
-            </div>
-            <button
-              type="submit"
-              className="bg-[#C9A96E] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform"
-            >
-              <CalendarDays size={16} /> Schedule Job
+          {/* Book for later */}
+          <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm overflow-hidden">
+            <button type="button" onClick={() => setBookingMode(bookingMode === "later" ? null : "later")}
+              className="w-full flex items-center justify-between p-4 text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
+                  <CalendarDays size={18} color="#A07840" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[#1a1a1a]">Book for a Later Date</p>
+                  <p className="text-xs text-[#6b7280]">Schedule now, collect payment on completion</p>
+                </div>
+              </div>
+              {bookingMode === "later" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
             </button>
-          </form>
-        )}
-      </div>
+
+            {bookingMode === "later" && (
+              <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Job Date *</label>
+                  <input type="date" value={startDate} required onChange={e => setStartDate(e.target.value)}
+                    className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Time</label>
+                  <input type="time" value={time} onChange={e => setTime(e.target.value)}
+                    className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
+                </div>
+                <div className="bg-[#FAFAF7] rounded-xl p-3 text-xs text-[#6b7280]">
+                  Payment of <span className="font-semibold text-[#A07840]">${total.toFixed(2)}</span> will be collected on completion.
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 block">Customer Signature</label>
+                  <SignaturePad onChange={handleSig} />
+                </div>
+
+                <button type="submit"
+                  className="bg-[#C9A96E] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                  <CalendarDays size={16} /> Schedule Job
+                </button>
+              </form>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -84,10 +84,15 @@ export async function saveJob(job: Omit<Job, "id">): Promise<Job> {
 }
 
 export async function saveJobs(jobs: Omit<Job, "id">[]): Promise<void> {
-  const { error } = await supabase
-    .from("jobs")
-    .insert(jobs.map(toRow));
-  if (error) throw error;
+  // Insert in batches of 5 to avoid request size limits
+  const batchSize = 5;
+  for (let i = 0; i < jobs.length; i += batchSize) {
+    const batch = jobs.slice(i, i + batchSize);
+    const { error } = await supabase
+      .from("jobs")
+      .insert(batch.map(toRow));
+    if (error) throw error;
+  }
 }
 
 export async function updateJobStatus(id: string, status: Job["status"]): Promise<void> {

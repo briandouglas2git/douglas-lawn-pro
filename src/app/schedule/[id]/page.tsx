@@ -3,10 +3,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { use } from "react";
 import {
-  ArrowLeft, Navigation, MapPin, CheckCircle2, Phone, User, Wrench, Clock, Timer, FileText,
+  ArrowLeft, Navigation, MapPin, CheckCircle2, Phone, User, Wrench, Clock, Timer, FileText, Camera,
 } from "lucide-react";
 import { getJob, updateJobStatus, setJobInvoice, type Job } from "@/lib/jobs";
 import { saveInvoice } from "@/lib/invoices";
+import JobPhotoSlot from "@/components/JobPhotoSlot";
 
 const STATUS_LABELS = {
   scheduled: { label: "Scheduled", bg: "#F5ECD7", color: "#A07840" },
@@ -135,6 +136,7 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             amount:        job.pricePerCut,
             cutNumber:     job.planCutNumber,
             totalCuts:     job.planTotalCuts,
+            afterPhotoUrl: job.afterPhotoUrl,
           }),
         });
         setToast(`Auto-invoiced $${job.pricePerCut.toFixed(2)} to ${job.customerName}`);
@@ -243,6 +245,31 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
         )}
       </div>
 
+      {/* Job Photos — required to complete */}
+      {(status === "arrived" || status === "completed") && (
+        <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
+          <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-1 flex items-center gap-1.5">
+            <Camera size={12} /> Job Photos
+            {status === "arrived" && (!job.beforePhotoUrl || !job.afterPhotoUrl) && (
+              <span className="text-red-500 normal-case ml-1">required</span>
+            )}
+          </p>
+          <p className="text-xs text-[#6b7280] mb-3">
+            {status === "completed"
+              ? "Photos for this job."
+              : "Add a before and after photo to mark this job complete."}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <JobPhotoSlot jobId={job.id} kind="before" url={job.beforePhotoUrl ?? null}
+              disabled={status === "completed"}
+              onChange={url => setJob(prev => prev ? { ...prev, beforePhotoUrl: url } : prev)} />
+            <JobPhotoSlot jobId={job.id} kind="after"  url={job.afterPhotoUrl ?? null}
+              disabled={status === "completed"}
+              onChange={url => setJob(prev => prev ? { ...prev, afterPhotoUrl: url } : prev)} />
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div className="bg-[#F5ECD7] border border-[#C9A96E] rounded-2xl p-3 mb-4 text-sm text-[#A07840]">{toast}</div>
       )}
@@ -264,13 +291,25 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
           </button>
         )}
 
-        {status === "arrived" && (
-          <button onClick={handleComplete}
-            className="bg-[#16A34A] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform">
-            <CheckCircle2 size={18} />
-            Mark as Completed
-          </button>
-        )}
+        {status === "arrived" && (() => {
+          const hasBoth = !!job.beforePhotoUrl && !!job.afterPhotoUrl;
+          const missing = !job.beforePhotoUrl && !job.afterPhotoUrl
+            ? "Add before & after photos to complete"
+            : !job.beforePhotoUrl
+              ? "Add a before photo to complete"
+              : "Add an after photo to complete";
+          return (
+            <button onClick={handleComplete} disabled={!hasBoth}
+              className={`rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md transition-transform ${
+                hasBoth
+                  ? "bg-[#16A34A] text-white active:scale-95"
+                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+              }`}>
+              <CheckCircle2 size={18} />
+              {hasBoth ? "Mark as Completed" : missing}
+            </button>
+          );
+        })()}
 
         {status === "completed" && (
           <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-2xl py-4 flex items-center justify-center gap-2 text-[#15803D] font-semibold text-sm">

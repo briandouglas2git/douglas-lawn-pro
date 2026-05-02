@@ -15,10 +15,12 @@ export interface Job {
   planCutNumber?: number;
   planTotalCuts?: number;
   pricePerCut?:   number;
-  dispatchedAt?:  string | null;
-  arrivedAt?:     string | null;
-  completedAt?:   string | null;
-  invoiceId?:     string | null;
+  dispatchedAt?:   string | null;
+  arrivedAt?:      string | null;
+  completedAt?:    string | null;
+  invoiceId?:      string | null;
+  beforePhotoUrl?: string | null;
+  afterPhotoUrl?:  string | null;
 }
 
 function toRow(job: Omit<Job, "id">) {
@@ -36,10 +38,12 @@ function toRow(job: Omit<Job, "id">) {
     plan_cut_number: job.planCutNumber ?? null,
     plan_total_cuts: job.planTotalCuts ?? null,
     price_per_cut:   job.pricePerCut ?? null,
-    dispatched_at:   job.dispatchedAt ?? null,
-    arrived_at:      job.arrivedAt ?? null,
-    completed_at:    job.completedAt ?? null,
-    invoice_id:      job.invoiceId ?? null,
+    dispatched_at:    job.dispatchedAt ?? null,
+    arrived_at:       job.arrivedAt ?? null,
+    completed_at:     job.completedAt ?? null,
+    invoice_id:       job.invoiceId ?? null,
+    before_photo_url: job.beforePhotoUrl ?? null,
+    after_photo_url:  job.afterPhotoUrl ?? null,
   };
 }
 
@@ -59,10 +63,12 @@ function fromRow(row: Record<string, unknown>): Job {
     planCutNumber:  (row.plan_cut_number as number) ?? undefined,
     planTotalCuts:  (row.plan_total_cuts as number) ?? undefined,
     pricePerCut:    (row.price_per_cut as number) ?? undefined,
-    dispatchedAt:   (row.dispatched_at as string) ?? null,
-    arrivedAt:      (row.arrived_at as string) ?? null,
-    completedAt:    (row.completed_at as string) ?? null,
-    invoiceId:      (row.invoice_id as string) ?? null,
+    dispatchedAt:    (row.dispatched_at as string) ?? null,
+    arrivedAt:       (row.arrived_at as string) ?? null,
+    completedAt:     (row.completed_at as string) ?? null,
+    invoiceId:       (row.invoice_id as string) ?? null,
+    beforePhotoUrl:  (row.before_photo_url as string) ?? null,
+    afterPhotoUrl:   (row.after_photo_url as string) ?? null,
   };
 }
 
@@ -127,6 +133,29 @@ export async function updateJobStatus(id: string, status: Job["status"]): Promis
 
 export async function setJobInvoice(id: string, invoiceId: string): Promise<void> {
   const { error } = await supabase.from("jobs").update({ invoice_id: invoiceId }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function uploadJobPhoto(jobId: string, kind: "before" | "after", file: File): Promise<string> {
+  const path = `${jobId}/${kind}-${Date.now()}.${file.name.split(".").pop() ?? "jpg"}`;
+  const { error: uploadError } = await supabase.storage
+    .from("job-photos")
+    .upload(path, file, { upsert: true, contentType: file.type });
+  if (uploadError) throw uploadError;
+
+  const { data } = supabase.storage.from("job-photos").getPublicUrl(path);
+  const url = data.publicUrl;
+
+  const column = kind === "before" ? "before_photo_url" : "after_photo_url";
+  const { error: updateError } = await supabase.from("jobs").update({ [column]: url }).eq("id", jobId);
+  if (updateError) throw updateError;
+
+  return url;
+}
+
+export async function clearJobPhoto(jobId: string, kind: "before" | "after"): Promise<void> {
+  const column = kind === "before" ? "before_photo_url" : "after_photo_url";
+  const { error } = await supabase.from("jobs").update({ [column]: null }).eq("id", jobId);
   if (error) throw error;
 }
 

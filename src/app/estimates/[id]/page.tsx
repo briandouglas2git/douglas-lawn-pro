@@ -1,57 +1,17 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { use } from "react";
 import {
   ArrowLeft, User, CalendarDays, CreditCard, Check,
-  ChevronDown, ChevronUp, Send, Clock, Repeat, Lock,
+  ChevronDown, ChevronUp, Send, Clock, Repeat, Lock, Trash2,
 } from "lucide-react";
 import SignaturePad from "@/components/SignaturePad";
 import { saveJob, saveJobs, type Job } from "@/lib/jobs";
+import { getEstimate, updateEstimateStatus, deleteEstimate, type Estimate } from "@/lib/estimates";
+import { getCustomer, type Customer } from "@/lib/customers";
+import { useRouter } from "next/navigation";
 
-// ── Sample data ───────────────────────────────────────────────────────────────
-const SAMPLE_ESTIMATES: Record<string, {
-  isPlan: boolean;
-  customerName: string;
-  customerId: string;
-  customerPhone: string;
-  description: string;
-  items: { description: string; qty: number; price: number }[];
-  notes: string;
-  expiryDate: string;
-  status: string;
-}> = {
-  "est1": {
-    isPlan:        false,
-    customerName:  "John Miller",
-    customerId:    "1",
-    customerPhone: "(519) 555-0101",
-    description:   "Spring cleanup + fertilization",
-    items: [
-      { description: "Spring Cleanup",     qty: 1, price: 150 },
-      { description: "Lawn Fertilization", qty: 1, price: 85  },
-      { description: "Edge Trimming",      qty: 1, price: 50  },
-    ],
-    notes:      "Includes removal of all debris. Gate access required.",
-    expiryDate: "May 15, 2026",
-    status:     "Sent",
-  },
-  "est2": {
-    isPlan:        true,
-    customerName:  "Sarah Thompson",
-    customerId:    "2",
-    customerPhone: "(519) 555-0182",
-    description:   "23-Week Lawn Care Plan",
-    items: [
-      { description: "Weekly Mowing (per cut)", qty: 23, price: 65 },
-    ],
-    notes:      "Includes 23 weekly cuts. Auto-invoiced after each completed cut. Card on file required.",
-    expiryDate: "",
-    status:     "Draft",
-  },
-};
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function generateWeeklyDates(startDate: string, count: number): string[] {
   const dates: string[] = [];
   const d = new Date(startDate + "T12:00:00");
@@ -64,11 +24,13 @@ function generateWeeklyDates(startDate: string, count: number): string[] {
 
 type BookingMode = null | "now" | "later";
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function EstimateDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const est    = SAMPLE_ESTIMATES[id];
+  const { id }   = use(params);
+  const router   = useRouter();
 
+  const [est,           setEst]           = useState<Estimate | null>(null);
+  const [customer,      setCustomer]      = useState<Customer | null>(null);
+  const [loading,       setLoading]       = useState(true);
   const [bookingMode,   setBookingMode]   = useState<BookingMode>(null);
   const [startDate,     setStartDate]     = useState("");
   const [time,          setTime]          = useState("");
@@ -84,23 +46,48 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
 
   const handleSig = useCallback((v: string | null) => setSignature(v), []);
 
-  if (!est) return <div className="p-4"><p className="text-[#6b7280]">Estimate not found.</p></div>;
+  useEffect(() => {
+    getEstimate(id).then(async e => {
+      setEst(e);
+      if (e?.customerId) {
+        const c = await getCustomer(e.customerId);
+        setCustomer(c);
+      }
+      setLoading(false);
+    });
+  }, [id]);
 
-  const total       = est.items.reduce((sum, i) => sum + i.qty * i.price, 0);
-  const perCut      = est.isPlan ? est.items[0].price : 0;
-  const totalCuts   = est.isPlan ? est.items[0].qty   : 0;
+  if (loading) return <div className="p-4"><div className="bg-white rounded-2xl h-32 animate-pulse" /></div>;
+  if (!est)    return <div className="p-4"><p className="text-[#6b7280]">Estimate not found.</p></div>;
+
+  const total       = est.total;
+  const perCut      = est.isPlan ? est.items[0]?.price ?? 0 : 0;
+  const totalCuts   = est.isPlan ? est.items[0]?.qty   ?? 0 : 0;
   const scheduledDates = est.isPlan && startDate ? generateWeeklyDates(startDate, totalCuts) : [];
   const previewDates   = showAllDates ? scheduledDates : scheduledDates.slice(0, 4);
 
+  async function handleDelete() {
+    if (!confirm("Delete this estimate?")) return;
+    await deleteEstimate(id);
+    router.push("/estimates");
+  }
+
   async function sendEstimate() {
+    if (!est || !customer?.phone) {
+      setToast("Customer phone number missing.");
+      setTimeout(() => setToast(""), 4000);
+      return;
+    }
     setSending(true);
     try {
       const res  = await fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "estimate", customerName: est.customerName, customerPhone: est.customerPhone, total }),
+        body: JSON.stringify({ type: "estimate", customerName: est.customerName, customerPhone: customer.phone, total }),
       });
       const data = await res.json();
+      await updateEstimateStatus(id, "sent");
+      setEst(prev => prev ? { ...prev, status: "sent" } : prev);
       setToast(data.preview ? `Preview: "${data.message}"` : "Estimate sent!");
     } catch { setToast("Could not send."); }
     finally { setSending(false); setTimeout(() => setToast(""), 5000); }
@@ -108,14 +95,14 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
 
   async function handleBook(e: React.FormEvent) {
     e.preventDefault();
-    if (!startDate) return;
+    if (!est || !startDate) return;
     if (est.isPlan && (!signature || !cardNumber)) return;
 
-    const customer = {
+    const customerInfo = {
       customerName:  est.customerName,
       customerId:    est.customerId,
-      customerPhone: est.customerPhone,
-      address:       "",
+      customerPhone: customer?.phone ?? "",
+      address:       customer?.address ?? "",
     };
 
     if (est.isPlan) {
@@ -124,7 +111,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         const jobDate = new Date(d);
         jobDate.setDate(jobDate.getDate() + i * 7);
         return {
-          ...customer,
+          ...customerInfo,
           service:       est.items[0].description,
           date:          jobDate.toISOString().split("T")[0],
           time:          time || "",
@@ -139,7 +126,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       await saveJobs(planJobs);
     } else {
       await saveJob({
-        ...customer,
+        ...customerInfo,
         service:  est.description,
         date:     startDate,
         time:     time || "",
@@ -149,19 +136,17 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       });
     }
 
+    await updateEstimateStatus(id, "booked");
     setBooked(true);
   }
 
-  // ── Success screen ────────────────────────────────────────────────────────
   if (booked) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-4 text-center">
         <div className="w-16 h-16 rounded-full bg-[#F5ECD7] flex items-center justify-center">
           <Check size={32} color="#A07840" strokeWidth={2.5} />
         </div>
-        <p className="text-lg font-bold text-[#1a1a1a]">
-          {est.isPlan ? "Plan Activated!" : "Job Booked!"}
-        </p>
+        <p className="text-lg font-bold text-[#1a1a1a]">{est.isPlan ? "Plan Activated!" : "Job Booked!"}</p>
         <p className="text-sm text-[#6b7280] max-w-xs">
           {est.isPlan
             ? `${totalCuts} weekly cuts scheduled starting ${startDate}. You'll be auto-invoiced $${perCut.toFixed(2)} after each completed cut.`
@@ -181,10 +166,8 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
     );
   }
 
-  // ── Main view ─────────────────────────────────────────────────────────────
   return (
     <div className="p-4">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <Link href="/estimates" className="w-8 h-8 rounded-full bg-white border border-[#ede8df] shadow-sm flex items-center justify-center">
           <ArrowLeft size={18} className="text-[#A07840]" />
@@ -193,11 +176,13 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
           <h1 className="text-lg font-bold text-[#1a1a1a]">{est.description}</h1>
           {est.isPlan
             ? <span className="text-xs font-semibold text-[#A07840] flex items-center gap-1"><Repeat size={11} /> Seasonal Plan</span>
-            : <span className="text-xs font-semibold text-[#B45309]">{est.status}</span>}
+            : <span className="text-xs font-semibold text-[#B45309] capitalize">{est.status}</span>}
         </div>
+        <button onClick={handleDelete} className="text-gray-300">
+          <Trash2 size={18} />
+        </button>
       </div>
 
-      {/* Customer */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2">Customer</p>
         <Link href={`/customers/${est.customerId}`} className="flex items-center gap-2 text-sm text-[#1a1a1a]">
@@ -205,25 +190,15 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </Link>
       </div>
 
-      {/* Scope / line items */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">
           {est.isPlan ? "Plan Details" : "Scope of Work"}
         </p>
         {est.isPlan ? (
           <div className="flex flex-col gap-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-[#6b7280]">Cuts per season</span>
-              <span className="font-semibold text-[#1a1a1a]">{totalCuts} weeks</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#6b7280]">Price per cut</span>
-              <span className="font-semibold text-[#1a1a1a]">${perCut.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#6b7280]">Billing</span>
-              <span className="font-semibold text-[#1a1a1a]">Auto after each cut</span>
-            </div>
+            <div className="flex justify-between"><span className="text-[#6b7280]">Cuts per season</span><span className="font-semibold text-[#1a1a1a]">{totalCuts} weeks</span></div>
+            <div className="flex justify-between"><span className="text-[#6b7280]">Price per cut</span><span className="font-semibold text-[#1a1a1a]">${perCut.toFixed(2)}</span></div>
+            <div className="flex justify-between"><span className="text-[#6b7280]">Billing</span><span className="font-semibold text-[#1a1a1a]">Auto after each cut</span></div>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -241,12 +216,11 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </div>
         {est.expiryDate && (
           <p className="text-xs text-[#6b7280] mt-2 flex items-center gap-1">
-            <Clock size={11} /> Valid until {est.expiryDate}
+            <Clock size={11} /> Valid until {new Date(est.expiryDate).toLocaleDateString()}
           </p>
         )}
       </div>
 
-      {/* Notes */}
       {est.notes && (
         <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
           <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2">Notes</p>
@@ -254,14 +228,10 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      {/* Toast */}
       {toast && (
-        <div className="bg-[#F5ECD7] border border-[#C9A96E] rounded-2xl p-3 mb-4 text-sm text-[#A07840]">
-          {toast}
-        </div>
+        <div className="bg-[#F5ECD7] border border-[#C9A96E] rounded-2xl p-3 mb-4 text-sm text-[#A07840]">{toast}</div>
       )}
 
-      {/* Send button */}
       <button onClick={sendEstimate} disabled={sending}
         className="w-full bg-white border border-[#C9A96E] text-[#A07840] rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 mb-3 active:scale-95 transition-transform disabled:opacity-60">
         <Send size={16} /> {sending ? "Sending…" : "Send Estimate to Customer"}
@@ -271,11 +241,8 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         {est.isPlan ? "Activate Plan" : "Book This Job"}
       </p>
 
-      {/* ── PLAN BOOKING ─────────────────────────────────────────────────── */}
       {est.isPlan ? (
         <form onSubmit={handleBook} className="flex flex-col gap-4">
-
-          {/* Start date + schedule preview */}
           <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
             <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">First Cut Date *</label>
             <input type="date" value={startDate} required onChange={e => setStartDate(e.target.value)}
@@ -305,64 +272,52 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
             )}
           </div>
 
-          {/* Signature */}
           <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
             <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-1">Customer Signature *</p>
             <p className="text-xs text-[#6b7280] mb-3">
-              By signing, customer authorizes Douglas Landscaping Co. to perform the services listed and charge the card on file after each completed cut.
+              By signing, customer authorizes Douglas Landscaping Co. to perform the services and charge the card on file after each completed cut.
             </p>
             <SignaturePad onChange={handleSig} />
-            {!signature && (
-              <p className="text-xs text-red-400 mt-1">Signature required to activate plan</p>
-            )}
+            {!signature && <p className="text-xs text-red-400 mt-1">Signature required</p>}
           </div>
 
-          {/* Card on file */}
           <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
             <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-1 flex items-center gap-1.5">
               <Lock size={11} /> Card on File *
             </p>
             <p className="text-xs text-[#6b7280] mb-3">Charged ${perCut.toFixed(2)} automatically after each completed cut.</p>
             <div className="flex flex-col gap-2">
-              <input
-                type="text" placeholder="Card number" value={cardNumber} maxLength={19} required
+              <input type="text" placeholder="Card number" value={cardNumber} maxLength={19} required
                 onChange={e => {
                   const v = e.target.value.replace(/\D/g, "").slice(0, 16);
                   setCardNumber(v.replace(/(.{4})/g, "$1 ").trim());
                 }}
-                className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E] font-mono tracking-widest"
-              />
+                className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E] font-mono tracking-widest" />
               <div className="flex gap-2">
-                <input
-                  type="text" placeholder="MM / YY" value={cardExpiry} maxLength={7} required
+                <input type="text" placeholder="MM / YY" value={cardExpiry} maxLength={7} required
                   onChange={e => {
                     const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                     setCardExpiry(v.length > 2 ? v.slice(0, 2) + " / " + v.slice(2) : v);
                   }}
-                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]"
-                />
-                <input
-                  type="text" placeholder="CVC" value={cardCvc} maxLength={3} required
+                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]" />
+                <input type="text" placeholder="CVC" value={cardCvc} maxLength={3} required
                   onChange={e => setCardCvc(e.target.value.replace(/\D/g, "").slice(0, 3))}
-                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]"
-                />
+                  className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]" />
               </div>
               <p className="text-[10px] text-[#6b7280] flex items-center gap-1">
-                <Lock size={9} /> Card details will be stored securely via Stripe when connected.
+                <Lock size={9} /> Card stored securely via Stripe when connected.
               </p>
             </div>
           </div>
 
           <button type="submit" disabled={!signature || !cardNumber || !startDate}
             className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40 flex items-center justify-center gap-2">
-            <Repeat size={16} /> Activate 23-Week Plan
+            <Repeat size={16} /> Activate {totalCuts}-Week Plan
           </button>
         </form>
 
       ) : (
-        // ── ONE-OFF BOOKING ───────────────────────────────────────────────
         <>
-          {/* Book with payment now */}
           <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm mb-3 overflow-hidden">
             <button type="button" onClick={() => setBookingMode(bookingMode === "now" ? null : "now")}
               className="w-full flex items-center justify-between p-4 text-left">
@@ -377,7 +332,6 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
               </div>
               {bookingMode === "now" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
             </button>
-
             {bookingMode === "now" && (
               <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
                 <div>
@@ -396,22 +350,17 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
                     onChange={e => setDeposit(e.target.value)}
                     className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
                 </div>
-
-                {/* Signature for one-off too */}
                 <div>
                   <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 block">Customer Signature</label>
                   <SignaturePad onChange={handleSig} />
                 </div>
-
-                <button type="submit"
-                  className="bg-[#A07840] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <button type="submit" className="bg-[#A07840] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
                   <CreditCard size={16} /> Confirm Payment & Book
                 </button>
               </form>
             )}
           </div>
 
-          {/* Book for later */}
           <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm overflow-hidden">
             <button type="button" onClick={() => setBookingMode(bookingMode === "later" ? null : "later")}
               className="w-full flex items-center justify-between p-4 text-left">
@@ -426,7 +375,6 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
               </div>
               {bookingMode === "later" ? <ChevronUp size={16} className="text-[#C9A96E]" /> : <ChevronDown size={16} className="text-gray-300" />}
             </button>
-
             {bookingMode === "later" && (
               <form onSubmit={handleBook} className="px-4 pb-4 flex flex-col gap-3 border-t border-[#ede8df] pt-4">
                 <div>
@@ -440,16 +388,13 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
                     className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
                 </div>
                 <div className="bg-[#FAFAF7] rounded-xl p-3 text-xs text-[#6b7280]">
-                  Payment of <span className="font-semibold text-[#A07840]">${total.toFixed(2)}</span> will be collected on completion.
+                  Payment of <span className="font-semibold text-[#A07840]">${total.toFixed(2)}</span> due on completion.
                 </div>
-
                 <div>
                   <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 block">Customer Signature</label>
                   <SignaturePad onChange={handleSig} />
                 </div>
-
-                <button type="submit"
-                  className="bg-[#C9A96E] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <button type="submit" className="bg-[#C9A96E] text-white rounded-2xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
                   <CalendarDays size={16} /> Schedule Job
                 </button>
               </form>

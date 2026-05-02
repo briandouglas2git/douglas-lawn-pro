@@ -1,15 +1,18 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Navigation, MapPin, CheckCircle2, Phone, User, Wrench, Clock, Timer } from "lucide-react";
 import { use } from "react";
-import { getJob, updateJobStatus, type Job } from "@/lib/jobs";
+import {
+  ArrowLeft, Navigation, MapPin, CheckCircle2, Phone, User, Wrench, Clock, Timer, FileText,
+} from "lucide-react";
+import { getJob, updateJobStatus, setJobInvoice, type Job } from "@/lib/jobs";
+import { saveInvoice } from "@/lib/invoices";
 
 const STATUS_LABELS = {
-  scheduled:  { label: "Scheduled",  bg: "#F5ECD7", color: "#A07840" },
-  en_route:   { label: "En Route",   bg: "#FEF3C7", color: "#B45309" },
-  arrived:    { label: "Arrived",    bg: "#DCFCE7", color: "#16A34A" },
-  completed:  { label: "Completed",  bg: "#F0FDF4", color: "#15803D" },
+  scheduled: { label: "Scheduled", bg: "#F5ECD7", color: "#A07840" },
+  en_route:  { label: "En Route",  bg: "#FEF3C7", color: "#B45309" },
+  arrived:   { label: "Arrived",   bg: "#DCFCE7", color: "#16A34A" },
+  completed: { label: "Completed", bg: "#F0FDF4", color: "#15803D" },
 };
 
 type Status = keyof typeof STATUS_LABELS;
@@ -23,9 +26,8 @@ function fmt(seconds: number) {
 }
 
 function LiveTimer({ startedAt }: { startedAt: number }) {
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState(Math.floor((Date.now() - startedAt) / 1000));
   useEffect(() => {
-    setElapsed(Math.floor((Date.now() - startedAt) / 1000));
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
@@ -37,13 +39,10 @@ function LiveTimer({ startedAt }: { startedAt: number }) {
 export default function JobDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
-  const [job,          setJob]          = useState<Job | null>(null);
-  const [status,       setStatus]       = useState<Status>("scheduled");
-  const [sending,      setSending]      = useState(false);
-  const [toast,        setToast]        = useState("");
-  const [dispatchedAt, setDispatchedAt] = useState<number | null>(null);
-  const [arrivedAt,    setArrivedAt]    = useState<number | null>(null);
-  const [completedAt,  setCompletedAt]  = useState<number | null>(null);
+  const [job,     setJob]     = useState<Job | null>(null);
+  const [status,  setStatus]  = useState<Status>("scheduled");
+  const [sending, setSending] = useState(false);
+  const [toast,   setToast]   = useState("");
 
   useEffect(() => {
     getJob(id).then(found => {
@@ -52,26 +51,29 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
     });
   }, [id]);
 
+  if (!job) {
+    return <div className="p-4"><div className="bg-white rounded-2xl h-32 animate-pulse" /></div>;
+  }
+
+  const dispatchedAt = job.dispatchedAt ? new Date(job.dispatchedAt).getTime() : null;
+  const arrivedAt    = job.arrivedAt    ? new Date(job.arrivedAt).getTime()    : null;
+  const completedAt  = job.completedAt  ? new Date(job.completedAt).getTime()  : null;
+
   const travelDuration = arrivedAt && dispatchedAt ? Math.floor((arrivedAt - dispatchedAt) / 1000) : null;
   const jobDuration    = completedAt && arrivedAt  ? Math.floor((completedAt - arrivedAt) / 1000)   : null;
 
-  if (!job) {
-    return (
-      <div className="p-4">
-        <p className="text-[#6b7280]">Job not found.</p>
-      </div>
-    );
-  }
-
-  const initial = job;
-
   async function notify(type: "dispatch" | "arrive") {
+    if (!job?.customerPhone) {
+      setToast("No phone number on file for this customer.");
+      setTimeout(() => setToast(""), 4000);
+      return;
+    }
     setSending(true);
     try {
       const res = await fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, customerName: initial.customerName, customerPhone: initial.customerPhone }),
+        body: JSON.stringify({ type, customerName: job.customerName, customerPhone: job.customerPhone }),
       });
       const data = await res.json();
       setToast(data.preview ? `Preview: "${data.message}"` : type === "dispatch" ? "Dispatch text sent!" : "Arrival text sent!");
@@ -84,43 +86,82 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
   }
 
   async function handleDispatch() {
-    setDispatchedAt(Date.now());
     setStatus("en_route");
-    updateJobStatus(id, "en_route");
+    await updateJobStatus(id, "en_route");
+    setJob(prev => prev ? { ...prev, status: "en_route", dispatchedAt: new Date().toISOString() } : prev);
     await notify("dispatch");
   }
 
   async function handleArrive() {
-    setArrivedAt(Date.now());
     setStatus("arrived");
-    updateJobStatus(id, "arrived");
+    await updateJobStatus(id, "arrived");
+    setJob(prev => prev ? { ...prev, status: "arrived", arrivedAt: new Date().toISOString() } : prev);
     await notify("arrive");
   }
 
-  function handleComplete() {
-    setCompletedAt(Date.now());
+  async function handleComplete() {
+    if (!job) return;
     setStatus("completed");
-    updateJobStatus(id, "completed");
+    await updateJobStatus(id, "completed");
+    setJob(prev => prev ? { ...prev, status: "completed", completedAt: new Date().toISOString() } : prev);
+
+    // Auto-create invoice for plan jobs
+    if (job.isPlan && job.pricePerCut) {
+      try {
+        const inv = await saveInvoice({
+          jobId:        job.id,
+          customerId:   job.customerId,
+          customerName: job.customerName,
+          lineItems:    [{
+            description: `${job.service} (Cut ${job.planCutNumber} of ${job.planTotalCuts})`,
+            qty:         1,
+            price:       job.pricePerCut,
+          }],
+          total:        job.pricePerCut,
+          status:       "sent",
+          sentAt:       new Date().toISOString(),
+          paidAt:       null,
+        });
+        await setJobInvoice(job.id, inv.id);
+
+        // Send auto-invoice notification
+        await fetch("/api/invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customerName:  job.customerName,
+            customerPhone: job.customerPhone,
+            service:       job.service,
+            amount:        job.pricePerCut,
+            cutNumber:     job.planCutNumber,
+            totalCuts:     job.planTotalCuts,
+          }),
+        });
+        setToast(`Auto-invoiced $${job.pricePerCut.toFixed(2)} to ${job.customerName}`);
+      } catch {
+        setToast("Job completed but invoice failed to send");
+      }
+      setTimeout(() => setToast(""), 5000);
+    }
   }
 
   const badge = STATUS_LABELS[status];
 
   return (
     <div className="p-4">
-      {/* Back + header */}
       <div className="flex items-center gap-3 mb-5">
         <Link href="/schedule" className="w-8 h-8 rounded-full bg-white border border-[#ede8df] shadow-sm flex items-center justify-center">
           <ArrowLeft size={18} className="text-[#A07840]" />
         </Link>
         <div className="flex-1">
-          <h1 className="text-lg font-bold text-[#1a1a1a]">{initial.service}</h1>
+          <h1 className="text-lg font-bold text-[#1a1a1a]">{job.service}</h1>
           <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: badge.bg, color: badge.color }}>
             {badge.label}
+            {job.isPlan && job.planCutNumber && ` · Cut ${job.planCutNumber} of ${job.planTotalCuts}`}
           </span>
         </div>
       </div>
 
-      {/* Time tracker */}
       {dispatchedAt && (
         <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm mb-4 overflow-hidden">
           <div className="px-4 pt-4 pb-2">
@@ -129,7 +170,6 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             </p>
           </div>
 
-          {/* Travel time row */}
           <div className="px-4 py-3 flex items-center justify-between border-t border-[#ede8df]">
             <div className="flex items-center gap-2">
               <Navigation size={14} className="text-[#B45309]" />
@@ -142,7 +182,6 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             </span>
           </div>
 
-          {/* Job time row — only shows after arrival */}
           {arrivedAt && (
             <div className="px-4 py-3 flex items-center justify-between border-t border-[#ede8df]">
               <div className="flex items-center gap-2">
@@ -157,91 +196,77 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             </div>
           )}
 
-          {/* Total — only shows when complete */}
           {jobDuration !== null && travelDuration !== null && (
             <div className="px-4 py-3 flex items-center justify-between border-t border-[#ede8df] bg-[#FAFAF7]">
               <div className="flex items-center gap-2">
                 <Clock size={14} className="text-[#A07840]" />
                 <span className="text-sm font-semibold text-[#A07840]">Total</span>
               </div>
-              <span className="text-sm font-bold text-[#A07840]">
-                {fmt(travelDuration + jobDuration)}
-              </span>
+              <span className="text-sm font-bold text-[#A07840]">{fmt(travelDuration + jobDuration)}</span>
             </div>
           )}
         </div>
       )}
 
-      {/* Customer */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">Customer</p>
         <div className="flex flex-col gap-2.5">
-          <Link href={`/customers/${initial.customerId}`} className="flex items-center gap-3 text-sm text-[#1a1a1a]">
-            <User size={16} className="text-[#C9A96E]" /> {initial.customerName}
+          <Link href={`/customers/${job.customerId}`} className="flex items-center gap-3 text-sm text-[#1a1a1a]">
+            <User size={16} className="text-[#C9A96E]" /> {job.customerName}
           </Link>
-          <a href={`tel:${initial.customerPhone}`} className="flex items-center gap-3 text-sm text-[#1a1a1a]">
-            <Phone size={16} className="text-[#C9A96E]" /> {initial.customerPhone}
-          </a>
-          <a
-            href={`https://maps.google.com/?q=${encodeURIComponent(initial.address)}`}
-            target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-3 text-sm text-[#1a1a1a]"
-          >
-            <MapPin size={16} className="text-[#C9A96E]" /> {initial.address}
-          </a>
+          {job.customerPhone && (
+            <a href={`tel:${job.customerPhone}`} className="flex items-center gap-3 text-sm text-[#1a1a1a]">
+              <Phone size={16} className="text-[#C9A96E]" /> {job.customerPhone}
+            </a>
+          )}
+          {job.address && (
+            <a href={`https://maps.google.com/?q=${encodeURIComponent(job.address)}`} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-3 text-sm text-[#1a1a1a]">
+              <MapPin size={16} className="text-[#C9A96E]" /> {job.address}
+            </a>
+          )}
         </div>
       </div>
 
-      {/* Job details */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">Job Details</p>
         <div className="flex flex-col gap-2.5">
           <div className="flex items-center gap-3 text-sm text-[#1a1a1a]">
-            <Wrench size={16} className="text-[#C9A96E]" /> {initial.service}
+            <Wrench size={16} className="text-[#C9A96E]" /> {job.service}
           </div>
           <div className="flex items-center gap-3 text-sm text-[#1a1a1a]">
-            <Clock size={16} className="text-[#C9A96E]" /> {initial.date} at {initial.time}
+            <Clock size={16} className="text-[#C9A96E]" /> {job.date}{job.time && ` at ${job.time}`}
           </div>
         </div>
-        {initial.notes && (
-          <p className="mt-3 text-sm text-[#6b7280] border-t border-[#ede8df] pt-3">{initial.notes}</p>
+        {job.notes && (
+          <p className="mt-3 text-sm text-[#6b7280] border-t border-[#ede8df] pt-3">{job.notes}</p>
         )}
       </div>
 
-      {/* Toast */}
       {toast && (
-        <div className="bg-[#F5ECD7] border border-[#C9A96E] rounded-2xl p-3 mb-4 text-sm text-[#A07840]">
-          {toast}
-        </div>
+        <div className="bg-[#F5ECD7] border border-[#C9A96E] rounded-2xl p-3 mb-4 text-sm text-[#A07840]">{toast}</div>
       )}
 
-      {/* Action buttons */}
       <div className="flex flex-col gap-3">
         {status === "scheduled" && (
-          <button
-            onClick={handleDispatch} disabled={sending}
-            className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform disabled:opacity-60"
-          >
+          <button onClick={handleDispatch} disabled={sending}
+            className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform disabled:opacity-60">
             <Navigation size={18} />
             {sending ? "Sending…" : "Dispatch — Text Customer"}
           </button>
         )}
 
         {status === "en_route" && (
-          <button
-            onClick={handleArrive} disabled={sending}
-            className="bg-[#A07840] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform disabled:opacity-60"
-          >
+          <button onClick={handleArrive} disabled={sending}
+            className="bg-[#A07840] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform disabled:opacity-60">
             <MapPin size={18} />
             {sending ? "Sending…" : "Arrived — Text Customer"}
           </button>
         )}
 
         {status === "arrived" && (
-          <button
-            onClick={handleComplete}
-            className="bg-[#16A34A] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform"
-          >
+          <button onClick={handleComplete}
+            className="bg-[#16A34A] text-white rounded-2xl py-4 font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-transform">
             <CheckCircle2 size={18} />
             Mark as Completed
           </button>
@@ -253,12 +278,17 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
           </div>
         )}
 
-        <Link
-          href={`/invoices/new?customer=${initial.customerId}`}
-          className="bg-white border border-[#ede8df] text-[#A07840] rounded-2xl py-4 font-semibold text-sm flex items-center justify-center shadow-sm active:scale-95 transition-transform"
-        >
-          Create Invoice for This Job
-        </Link>
+        {job.invoiceId ? (
+          <Link href={`/invoices/${job.invoiceId}`}
+            className="bg-white border border-[#ede8df] text-[#A07840] rounded-2xl py-4 font-semibold text-sm flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-transform">
+            <FileText size={14} /> View Invoice
+          </Link>
+        ) : status === "completed" && !job.isPlan ? (
+          <Link href={`/invoices/new?customer=${job.customerId}`}
+            className="bg-white border border-[#ede8df] text-[#A07840] rounded-2xl py-4 font-semibold text-sm flex items-center justify-center shadow-sm active:scale-95 transition-transform">
+            Create Invoice for This Job
+          </Link>
+        ) : null}
       </div>
     </div>
   );

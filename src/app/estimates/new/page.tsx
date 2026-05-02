@@ -1,14 +1,10 @@
 "use client";
-import { useState, Suspense } from "react";
+import { useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Check, CalendarDays } from "lucide-react";
-
-const CUSTOMERS: Record<string, string> = {
-  "1": "John Miller",
-  "2": "Sarah Thompson",
-  "3": "Mike Arsenault",
-};
+import { getCustomers, type Customer } from "@/lib/customers";
+import { saveEstimate, calculateTotal, type LineItem } from "@/lib/estimates";
 
 const SERVICE_SUGGESTIONS = [
   "Weekly Mowing", "Bi-Weekly Mowing", "Spring Cleanup", "Fall Cleanup",
@@ -16,29 +12,31 @@ const SERVICE_SUGGESTIONS = [
   "Full Lawn Care Package", "Mulching", "Garden Bed Cleanup",
 ];
 
-interface LineItem { description: string; qty: number; price: number; }
-
-const PLAN_DEFAULTS: LineItem[] = [
-  { description: "Weekly Mowing (per cut)", qty: 23, price: 65 },
-];
-
 function NewEstimateForm() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const preselected  = searchParams.get("customer") ?? "";
 
-  const [isPlan,      setIsPlan]      = useState(false);
-  const [customerId,  setCustomerId]  = useState(preselected);
-  const [items,       setItems]       = useState<LineItem[]>([{ description: "", qty: 1, price: 0 }]);
-  const [notes,       setNotes]       = useState("");
-  const [expiryDate,  setExpiryDate]  = useState("");
-  const [submitted,   setSubmitted]   = useState(false);
+  const [customers,  setCustomers]  = useState<Customer[]>([]);
+  const [isPlan,     setIsPlan]     = useState(false);
+  const [customerId, setCustomerId] = useState(preselected);
+  const [items,      setItems]      = useState<LineItem[]>([{ description: "", qty: 1, price: 0 }]);
+  const [notes,      setNotes]      = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [saving,     setSaving]     = useState(false);
+  const [submitted,  setSubmitted]  = useState(false);
 
-  const total = items.reduce((sum, i) => sum + i.qty * i.price, 0);
+  useEffect(() => { getCustomers().then(setCustomers); }, []);
+
+  const total = calculateTotal(items);
+  const selectedCustomer = customers.find(c => c.id === customerId);
 
   function togglePlan(on: boolean) {
     setIsPlan(on);
-    setItems(on ? PLAN_DEFAULTS : [{ description: "", qty: 1, price: 0 }]);
+    setItems(on
+      ? [{ description: "Weekly Mowing (per cut)", qty: 23, price: 65 }]
+      : [{ description: "", qty: 1, price: 0 }]
+    );
     if (on) setNotes("Includes 23 weekly cuts. Auto-invoiced after each completed cut. Card on file required.");
   }
 
@@ -46,11 +44,27 @@ function NewEstimateForm() {
     setItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!customerId || items.every(i => !i.description)) return;
-    setSubmitted(true);
-    setTimeout(() => router.push("/estimates"), 1500);
+    if (!customerId || items.every(i => !i.description) || !selectedCustomer) return;
+    setSaving(true);
+    try {
+      await saveEstimate({
+        customerId,
+        customerName: selectedCustomer.name,
+        description:  isPlan ? "23-Week Lawn Care Plan" : items.map(i => i.description).filter(Boolean).join(", "),
+        items:        items.filter(i => i.description),
+        notes,
+        expiryDate,
+        status:       "draft",
+        isPlan,
+        total,
+      });
+      setSubmitted(true);
+      setTimeout(() => router.push("/estimates"), 1200);
+    } catch {
+      setSaving(false);
+    }
   }
 
   if (submitted) {
@@ -60,7 +74,6 @@ function NewEstimateForm() {
           <Check size={32} color="#A07840" strokeWidth={2.5} />
         </div>
         <p className="text-lg font-bold text-[#1a1a1a]">{isPlan ? "Plan Estimate Created!" : "Estimate Created!"}</p>
-        <p className="text-sm text-[#6b7280]">Redirecting…</p>
       </div>
     );
   }
@@ -75,18 +88,16 @@ function NewEstimateForm() {
       </div>
 
       {/* Plan toggle */}
-      <div
-        onClick={() => togglePlan(!isPlan)}
+      <div onClick={() => togglePlan(!isPlan)}
         className={`rounded-2xl p-4 border-2 flex items-center gap-3 cursor-pointer transition-colors ${
           isPlan ? "border-[#C9A96E] bg-[#F5ECD7]" : "border-[#ede8df] bg-white"
-        }`}
-      >
+        }`}>
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isPlan ? "bg-[#C9A96E]" : "bg-[#F5ECD7]"}`}>
           <CalendarDays size={20} color={isPlan ? "#fff" : "#A07840"} />
         </div>
         <div className="flex-1">
           <p className="text-sm font-semibold text-[#1a1a1a]">23-Week Lawn Care Plan</p>
-          <p className="text-xs text-[#6b7280]">Auto-schedule 23 weekly cuts · Auto-invoice each cut</p>
+          <p className="text-xs text-[#6b7280]">Auto-schedule weekly cuts · Auto-invoice each one</p>
         </div>
         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
           isPlan ? "bg-[#C9A96E] border-[#C9A96E]" : "border-gray-300"
@@ -98,15 +109,16 @@ function NewEstimateForm() {
       {/* Customer */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
         <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Customer *</label>
-        <select
-          value={customerId} onChange={e => setCustomerId(e.target.value)} required
-          className="mt-2 w-full text-sm text-[#1a1a1a] outline-none bg-transparent"
-        >
+        <select value={customerId} onChange={e => setCustomerId(e.target.value)} required
+          className="mt-2 w-full text-sm text-[#1a1a1a] outline-none bg-transparent">
           <option value="">Select a customer…</option>
-          {Object.entries(CUSTOMERS).map(([id, name]) => (
-            <option key={id} value={id}>{name}</option>
-          ))}
+          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        {customers.length === 0 && (
+          <Link href="/customers/new" className="text-xs text-[#C9A96E] font-semibold mt-2 inline-block">
+            + Add a customer first
+          </Link>
+        )}
       </div>
 
       {/* Line items */}
@@ -118,12 +130,10 @@ function NewEstimateForm() {
         {items.map((item, index) => (
           <div key={index} className="flex flex-col gap-2 pb-3 border-b border-[#ede8df] last:border-0 last:pb-0">
             <div className="flex gap-2 items-center">
-              <input
-                type="text" placeholder="e.g. Weekly Mowing" value={item.description}
+              <input type="text" placeholder="e.g. Weekly Mowing" value={item.description}
                 onChange={e => updateItem(index, "description", e.target.value)}
                 list="service-suggestions"
-                className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-              />
+                className="flex-1 text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
               {items.length > 1 && (
                 <button type="button" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))}>
                   <Trash2 size={16} className="text-gray-300" />
@@ -132,26 +142,20 @@ function NewEstimateForm() {
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
-                <label className="text-[10px] text-[#6b7280]">{isPlan ? "# of Cuts" : "Qty"}</label>
-                <input
-                  type="number" min={1} value={item.qty}
+                <label className="text-[10px] text-[#6b7280]">{isPlan ? "Cuts" : "Qty"}</label>
+                <input type="number" min={1} value={item.qty}
                   onChange={e => updateItem(index, "qty", Number(e.target.value))}
-                  className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-                />
+                  className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
               </div>
               <div className="flex-1">
                 <label className="text-[10px] text-[#6b7280]">$ / {isPlan ? "cut" : "unit"}</label>
-                <input
-                  type="number" min={0} step={0.01} value={item.price}
+                <input type="number" min={0} step={0.01} value={item.price}
                   onChange={e => updateItem(index, "price", Number(e.target.value))}
-                  className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]"
-                />
+                  className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
               </div>
               <div className="flex-1">
                 <label className="text-[10px] text-[#6b7280]">Total</label>
-                <p className="text-sm font-semibold text-[#A07840] px-3 py-2">
-                  ${(item.qty * item.price).toFixed(2)}
-                </p>
+                <p className="text-sm font-semibold text-[#A07840] px-3 py-2">${(item.qty * item.price).toFixed(2)}</p>
               </div>
             </div>
           </div>
@@ -169,7 +173,6 @@ function NewEstimateForm() {
         )}
       </div>
 
-      {/* Total */}
       <div className="bg-[#F5ECD7] rounded-2xl p-4 flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold text-[#A07840]">{isPlan ? "Season Total" : "Estimate Total"}</p>
@@ -178,7 +181,6 @@ function NewEstimateForm() {
         <p className="text-xl font-bold text-[#A07840]">${total.toFixed(2)}</p>
       </div>
 
-      {/* Expiry + notes */}
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm flex flex-col gap-4">
         {!isPlan && (
           <div>
@@ -190,16 +192,14 @@ function NewEstimateForm() {
         <div className={isPlan ? "" : "border-t border-[#ede8df] pt-4"}>
           <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Notes for Customer</label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)}
-            placeholder="Describe scope of work, conditions, etc."
-            rows={3}
-            className="mt-2 w-full text-sm text-[#1a1a1a] outline-none bg-transparent resize-none placeholder:text-gray-300"
-          />
+            placeholder="Describe scope of work, conditions, etc." rows={3}
+            className="mt-2 w-full text-sm text-[#1a1a1a] outline-none bg-transparent resize-none placeholder:text-gray-300" />
         </div>
       </div>
 
-      <button type="submit"
-        className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform">
-        {isPlan ? "Create Plan Estimate" : "Save Estimate"}
+      <button type="submit" disabled={saving}
+        className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40">
+        {saving ? "Saving…" : isPlan ? "Create Plan Estimate" : "Save Estimate"}
       </button>
     </form>
   );

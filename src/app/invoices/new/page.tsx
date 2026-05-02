@@ -5,7 +5,9 @@ import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Check } from "lucide-react";
 import { getCustomers, type Customer } from "@/lib/customers";
 import { saveInvoice } from "@/lib/invoices";
+import { saveService } from "@/lib/services";
 import { calculateTotal, type LineItem } from "@/lib/estimates";
+import ServicePicker from "@/components/ServicePicker";
 
 function NewInvoiceForm() {
   const router       = useRouter();
@@ -82,6 +84,13 @@ function NewInvoiceForm() {
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm flex flex-col gap-3">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Line Items</p>
 
+        <ServicePicker onPick={s => {
+          setItems(prev => [
+            ...prev.filter(i => i.description),
+            { description: s.name, qty: s.defaultQty, price: s.defaultPrice }
+          ]);
+        }} />
+
         {items.map((item, index) => (
           <div key={index} className="flex flex-col gap-2 pb-3 border-b border-[#ede8df] last:border-0 last:pb-0">
             <div className="flex gap-2 items-center">
@@ -105,6 +114,11 @@ function NewInvoiceForm() {
                 <label className="text-[10px] text-[#6b7280]">Price ($)</label>
                 <input type="number" min={0} step={0.01} value={item.price}
                   onChange={e => updateItem(index, "price", Number(e.target.value))}
+                  onBlur={async () => {
+                    if (item.description && item.price > 0) {
+                      try { await saveService({ name: item.description, defaultPrice: item.price, defaultQty: item.qty }); } catch {}
+                    }
+                  }}
                   className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
               </div>
               <div className="flex-1">

@@ -6,12 +6,20 @@ export interface LineItem {
   price:       number;
 }
 
+export interface EstimateOption {
+  id:    string;
+  label: string;
+  items: LineItem[];
+}
+
 export interface Estimate {
   id:           string;
   customerId:   string;
   customerName: string;
   description:  string;
-  items:        LineItem[];
+  items:        LineItem[];               // legacy single-option fallback
+  options:      EstimateOption[] | null;  // tiered (Good/Better/Best)
+  selectedOptionId: string | null;        // which option the customer chose
   notes:        string;
   expiryDate:   string;
   status:       "draft" | "sent" | "accepted" | "booked" | "declined";
@@ -21,13 +29,17 @@ export interface Estimate {
 }
 
 function fromRow(row: Record<string, unknown>): Estimate {
-  const items = (row.items as LineItem[]) ?? [];
+  const rawOptions = row.options as { id: string; label: string; items: LineItem[]; selected?: boolean }[] | null;
   return {
     id:           row.id as string,
     customerId:   (row.customer_id as string) ?? "",
     customerName: row.customer_name as string,
     description:  (row.description as string) ?? "",
-    items,
+    items:        ((row.items as LineItem[]) ?? []),
+    options:      rawOptions && rawOptions.length > 0
+                    ? rawOptions.map(o => ({ id: o.id, label: o.label, items: o.items ?? [] }))
+                    : null,
+    selectedOptionId: rawOptions?.find(o => o.selected)?.id ?? null,
     notes:        (row.notes as string) ?? "",
     expiryDate:   (row.expiry_date as string) ?? "",
     status:       (row.status as Estimate["status"]) ?? "draft",
@@ -43,6 +55,14 @@ function toRow(e: Omit<Estimate, "id" | "createdAt">) {
     customer_name: e.customerName,
     description:   e.description,
     items:         e.items,
+    options:       e.options
+                    ? e.options.map(o => ({
+                        id: o.id,
+                        label: o.label,
+                        items: o.items,
+                        selected: o.id === e.selectedOptionId,
+                      }))
+                    : null,
     notes:         e.notes,
     expiry_date:   e.expiryDate || null,
     status:        e.status,
@@ -85,6 +105,16 @@ export async function updateEstimateStatus(id: string, status: Estimate["status"
   if (error) throw error;
 }
 
+export async function selectEstimateOption(id: string, optionId: string): Promise<void> {
+  // Re-read so we can rewrite the JSON with the new selected flag
+  const { data } = await supabase.from("estimates").select("options").eq("id", id).single();
+  const options = (data?.options as { id: string; label: string; items: LineItem[]; selected?: boolean }[] | null) ?? null;
+  if (!options) return;
+  const updated = options.map(o => ({ ...o, selected: o.id === optionId }));
+  const { error } = await supabase.from("estimates").update({ options: updated }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function deleteEstimate(id: string): Promise<void> {
   const { error } = await supabase.from("estimates").delete().eq("id", id);
   if (error) throw error;
@@ -92,4 +122,8 @@ export async function deleteEstimate(id: string): Promise<void> {
 
 export function calculateTotal(items: LineItem[]): number {
   return items.reduce((sum, i) => sum + i.qty * i.price, 0);
+}
+
+export function makeOptionId() {
+  return Math.random().toString(36).slice(2, 10);
 }

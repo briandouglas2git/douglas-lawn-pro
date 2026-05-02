@@ -4,11 +4,11 @@ import Link from "next/link";
 import { use } from "react";
 import {
   ArrowLeft, User, CalendarDays, CreditCard, Check,
-  ChevronDown, ChevronUp, Send, Clock, Repeat, Lock, Trash2,
+  ChevronDown, ChevronUp, Send, Clock, Repeat, Lock, Trash2, Award,
 } from "lucide-react";
 import SignaturePad from "@/components/SignaturePad";
 import { saveJob, saveJobs, type Job } from "@/lib/jobs";
-import { getEstimate, updateEstimateStatus, deleteEstimate, type Estimate } from "@/lib/estimates";
+import { getEstimate, updateEstimateStatus, deleteEstimate, selectEstimateOption, calculateTotal, type Estimate, type EstimateOption } from "@/lib/estimates";
 import { getCustomer, type Customer } from "@/lib/customers";
 import { useRouter } from "next/navigation";
 
@@ -25,13 +25,14 @@ function generateWeeklyDates(startDate: string, count: number): string[] {
 type BookingMode = null | "now" | "later";
 
 export default function EstimateDetail({ params }: { params: Promise<{ id: string }> }) {
-  const { id }   = use(params);
-  const router   = useRouter();
+  const { id } = use(params);
+  const router = useRouter();
 
   const [est,           setEst]           = useState<Estimate | null>(null);
   const [customer,      setCustomer]      = useState<Customer | null>(null);
   const [loading,       setLoading]       = useState(true);
   const [bookingMode,   setBookingMode]   = useState<BookingMode>(null);
+  const [chosenOption,  setChosenOption]  = useState<string | null>(null);
   const [startDate,     setStartDate]     = useState("");
   const [time,          setTime]          = useState("");
   const [deposit,       setDeposit]       = useState("");
@@ -49,6 +50,8 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     getEstimate(id).then(async e => {
       setEst(e);
+      if (e?.selectedOptionId) setChosenOption(e.selectedOptionId);
+      else if (e?.options && e.options.length === 1) setChosenOption(e.options[0].id);
       if (e?.customerId) {
         const c = await getCustomer(e.customerId);
         setCustomer(c);
@@ -60,11 +63,22 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
   if (loading) return <div className="p-4"><div className="bg-white rounded-2xl h-32 animate-pulse" /></div>;
   if (!est)    return <div className="p-4"><p className="text-[#6b7280]">Estimate not found.</p></div>;
 
-  const total       = est.total;
-  const perCut      = est.isPlan ? est.items[0]?.price ?? 0 : 0;
-  const totalCuts   = est.isPlan ? est.items[0]?.qty   ?? 0 : 0;
-  const scheduledDates = est.isPlan && startDate ? generateWeeklyDates(startDate, totalCuts) : [];
-  const previewDates   = showAllDates ? scheduledDates : scheduledDates.slice(0, 4);
+  const hasOptions      = !!est.options && est.options.length > 0;
+  const isTieredChoice  = hasOptions && est.options!.length >= 2;
+  const activeOption    = hasOptions
+    ? (est.options!.find(o => o.id === chosenOption) ?? null)
+    : null;
+  const activeItems     = hasOptions ? (activeOption?.items ?? []) : est.items;
+  const activeTotal     = activeItems.length > 0 ? calculateTotal(activeItems) : est.total;
+  const perCut          = est.isPlan ? est.items[0]?.price ?? 0 : 0;
+  const totalCuts       = est.isPlan ? est.items[0]?.qty   ?? 0 : 0;
+  const scheduledDates  = est.isPlan && startDate ? generateWeeklyDates(startDate, totalCuts) : [];
+  const previewDates    = showAllDates ? scheduledDates : scheduledDates.slice(0, 4);
+
+  async function pickOption(optId: string) {
+    setChosenOption(optId);
+    if (est?.id) await selectEstimateOption(est.id, optId);
+  }
 
   async function handleDelete() {
     if (!confirm("Delete this estimate?")) return;
@@ -83,7 +97,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       const res  = await fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "estimate", customerName: est.customerName, customerPhone: customer.phone, total }),
+        body: JSON.stringify({ type: "estimate", customerName: est.customerName, customerPhone: customer.phone, total: est.total }),
       });
       const data = await res.json();
       await updateEstimateStatus(id, "sent");
@@ -97,6 +111,11 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
     e.preventDefault();
     if (!est || !startDate) return;
     if (est.isPlan && (!signature || !cardNumber)) return;
+    if (isTieredChoice && !chosenOption) {
+      setToast("Customer must pick an option first.");
+      setTimeout(() => setToast(""), 4000);
+      return;
+    }
 
     const customerInfo = {
       customerName:  est.customerName,
@@ -125,9 +144,12 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       });
       await saveJobs(planJobs);
     } else {
+      const serviceLabel = isTieredChoice && activeOption
+        ? activeOption.label
+        : activeItems.map(i => i.description).join(", ");
       await saveJob({
         ...customerInfo,
-        service:  est.description,
+        service:  serviceLabel,
         date:     startDate,
         time:     time || "",
         notes:    est.notes,
@@ -149,9 +171,9 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         <p className="text-lg font-bold text-[#1a1a1a]">{est.isPlan ? "Plan Activated!" : "Job Booked!"}</p>
         <p className="text-sm text-[#6b7280] max-w-xs">
           {est.isPlan
-            ? `${totalCuts} weekly cuts scheduled starting ${startDate}. You'll be auto-invoiced $${perCut.toFixed(2)} after each completed cut.`
+            ? `${totalCuts} weekly cuts scheduled starting ${startDate}. Auto-invoiced $${perCut.toFixed(2)} after each cut.`
             : bookingMode === "now"
-              ? `Payment of $${Number(deposit || total).toFixed(2)} collected. Scheduled for ${startDate}.`
+              ? `Payment of $${Number(deposit || activeTotal).toFixed(2)} collected. Scheduled for ${startDate}.`
               : `Scheduled for ${startDate}. Payment due on completion.`}
         </p>
         <div className="flex gap-3 mt-2">
@@ -176,7 +198,9 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
           <h1 className="text-lg font-bold text-[#1a1a1a]">{est.description}</h1>
           {est.isPlan
             ? <span className="text-xs font-semibold text-[#A07840] flex items-center gap-1"><Repeat size={11} /> Seasonal Plan</span>
-            : <span className="text-xs font-semibold text-[#B45309] capitalize">{est.status}</span>}
+            : isTieredChoice
+              ? <span className="text-xs font-semibold text-[#A07840] flex items-center gap-1"><Award size={11} /> {est.options!.length} options</span>
+              : <span className="text-xs font-semibold text-[#B45309] capitalize">{est.status}</span>}
         </div>
         <button onClick={handleDelete} className="text-gray-300">
           <Trash2 size={18} />
@@ -190,36 +214,75 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         </Link>
       </div>
 
-      <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
-        <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">
-          {est.isPlan ? "Plan Details" : "Scope of Work"}
-        </p>
-        {est.isPlan ? (
-          <div className="flex flex-col gap-2 text-sm">
-            <div className="flex justify-between"><span className="text-[#6b7280]">Cuts per season</span><span className="font-semibold text-[#1a1a1a]">{totalCuts} weeks</span></div>
-            <div className="flex justify-between"><span className="text-[#6b7280]">Price per cut</span><span className="font-semibold text-[#1a1a1a]">${perCut.toFixed(2)}</span></div>
-            <div className="flex justify-between"><span className="text-[#6b7280]">Billing</span><span className="font-semibold text-[#1a1a1a]">Auto after each cut</span></div>
-          </div>
-        ) : (
+      {/* TIERED OPTIONS CHOOSER */}
+      {isTieredChoice && (
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide mb-2">Pick a Package</p>
           <div className="flex flex-col gap-2">
-            {est.items.map((item, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-[#1a1a1a]">{item.description}{item.qty > 1 ? ` ×${item.qty}` : ""}</span>
-                <span className="font-semibold text-[#A07840]">${(item.qty * item.price).toFixed(2)}</span>
-              </div>
-            ))}
+            {est.options!.map((opt: EstimateOption) => {
+              const total = calculateTotal(opt.items);
+              const isPicked = chosenOption === opt.id;
+              return (
+                <button key={opt.id} type="button" onClick={() => pickOption(opt.id)}
+                  className={`bg-white rounded-2xl p-4 border-2 shadow-sm text-left active:scale-95 transition-transform ${
+                    isPicked ? "border-[#16A34A]" : "border-[#ede8df]"
+                  }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="font-bold text-[#1a1a1a]">{opt.label}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-[#A07840]">${total.toFixed(2)}</span>
+                      {isPicked && (
+                        <div className="w-6 h-6 rounded-full bg-[#16A34A] flex items-center justify-center">
+                          <Check size={12} color="#fff" strokeWidth={3} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <ul className="text-xs text-[#6b7280] space-y-0.5">
+                    {opt.items.map((i, idx) => (
+                      <li key={idx}>• {i.description}{i.qty > 1 ? ` ×${i.qty}` : ""}</li>
+                    ))}
+                  </ul>
+                </button>
+              );
+            })}
           </div>
-        )}
-        <div className="border-t border-[#ede8df] mt-3 pt-3 flex items-center justify-between">
-          <span className="text-sm font-bold text-[#1a1a1a]">{est.isPlan ? "Season Total" : "Total"}</span>
-          <span className="text-lg font-bold text-[#A07840]">${total.toFixed(2)}</span>
         </div>
-        {est.expiryDate && (
-          <p className="text-xs text-[#6b7280] mt-2 flex items-center gap-1">
-            <Clock size={11} /> Valid until {new Date(est.expiryDate).toLocaleDateString()}
+      )}
+
+      {/* SCOPE / DETAILS for non-tiered */}
+      {!isTieredChoice && (
+        <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
+          <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-3">
+            {est.isPlan ? "Plan Details" : "Scope of Work"}
           </p>
-        )}
-      </div>
+          {est.isPlan ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <div className="flex justify-between"><span className="text-[#6b7280]">Cuts per season</span><span className="font-semibold text-[#1a1a1a]">{totalCuts} weeks</span></div>
+              <div className="flex justify-between"><span className="text-[#6b7280]">Price per cut</span><span className="font-semibold text-[#1a1a1a]">${perCut.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-[#6b7280]">Billing</span><span className="font-semibold text-[#1a1a1a]">Auto after each cut</span></div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {activeItems.map((item, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-[#1a1a1a]">{item.description}{item.qty > 1 ? ` ×${item.qty}` : ""}</span>
+                  <span className="font-semibold text-[#A07840]">${(item.qty * item.price).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="border-t border-[#ede8df] mt-3 pt-3 flex items-center justify-between">
+            <span className="text-sm font-bold text-[#1a1a1a]">{est.isPlan ? "Season Total" : "Total"}</span>
+            <span className="text-lg font-bold text-[#A07840]">${activeTotal.toFixed(2)}</span>
+          </div>
+          {est.expiryDate && (
+            <p className="text-xs text-[#6b7280] mt-2 flex items-center gap-1">
+              <Clock size={11} /> Valid until {new Date(est.expiryDate).toLocaleDateString()}
+            </p>
+          )}
+        </div>
+      )}
 
       {est.notes && (
         <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm mb-4">
@@ -240,6 +303,12 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide text-center mb-3">
         {est.isPlan ? "Activate Plan" : "Book This Job"}
       </p>
+
+      {isTieredChoice && !chosenOption && (
+        <div className="bg-[#FEF3C7] border border-[#F59E0B] rounded-2xl p-4 text-center text-sm text-[#B45309] mb-3">
+          Pick a package above to enable booking.
+        </div>
+      )}
 
       {est.isPlan ? (
         <form onSubmit={handleBook} className="flex flex-col gap-4">
@@ -320,7 +389,8 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         <>
           <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm mb-3 overflow-hidden">
             <button type="button" onClick={() => setBookingMode(bookingMode === "now" ? null : "now")}
-              className="w-full flex items-center justify-between p-4 text-left">
+              disabled={isTieredChoice && !chosenOption}
+              className="w-full flex items-center justify-between p-4 text-left disabled:opacity-40">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
                   <CreditCard size={18} color="#A07840" />
@@ -346,7 +416,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Amount Collected ($)</label>
-                  <input type="number" min={0} step={0.01} value={deposit} placeholder={total.toFixed(2)}
+                  <input type="number" min={0} step={0.01} value={deposit} placeholder={activeTotal.toFixed(2)}
                     onChange={e => setDeposit(e.target.value)}
                     className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
                 </div>
@@ -363,7 +433,8 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
 
           <div className="bg-white rounded-2xl border border-[#ede8df] shadow-sm overflow-hidden">
             <button type="button" onClick={() => setBookingMode(bookingMode === "later" ? null : "later")}
-              className="w-full flex items-center justify-between p-4 text-left">
+              disabled={isTieredChoice && !chosenOption}
+              className="w-full flex items-center justify-between p-4 text-left disabled:opacity-40">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
                   <CalendarDays size={18} color="#A07840" />
@@ -388,7 +459,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
                     className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
                 </div>
                 <div className="bg-[#FAFAF7] rounded-xl p-3 text-xs text-[#6b7280]">
-                  Payment of <span className="font-semibold text-[#A07840]">${total.toFixed(2)}</span> due on completion.
+                  Payment of <span className="font-semibold text-[#A07840]">${activeTotal.toFixed(2)}</span> due on completion.
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2 block">Customer Signature</label>

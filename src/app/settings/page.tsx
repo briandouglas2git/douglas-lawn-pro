@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, Settings as SettingsIcon } from "lucide-react";
+import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight } from "lucide-react";
 import { getSettings, updateSettings, type Settings } from "@/lib/settings";
 
 export default function SettingsPage() {
@@ -82,6 +82,18 @@ export default function SettingsPage() {
             className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]" />
         </div>
       </div>
+
+      <Link href="/services"
+        className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-[#F5ECD7] flex items-center justify-center">
+          <Wrench size={18} color="#A07840" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-[#1a1a1a]">Service Price Book</p>
+          <p className="text-xs text-[#6b7280]">Manage your saved services & default prices</p>
+        </div>
+        <ChevronRight size={16} className="text-[#C9A96E]" />
+      </Link>
 
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2">Integrations</p>

@@ -1,5 +1,11 @@
 import { supabase } from "./supabase";
 
+export interface JobLineItem {
+  description: string;
+  qty:         number;
+  price:       number;
+}
+
 export interface Job {
   id:             string;
   customerName:   string;
@@ -15,6 +21,8 @@ export interface Job {
   planCutNumber?: number;
   planTotalCuts?: number;
   pricePerCut?:   number;
+  total?:         number | null;
+  serviceItems?:  JobLineItem[] | null;
   dispatchedAt?:   string | null;
   arrivedAt?:      string | null;
   completedAt?:    string | null;
@@ -38,6 +46,8 @@ function toRow(job: Omit<Job, "id">) {
     plan_cut_number: job.planCutNumber ?? null,
     plan_total_cuts: job.planTotalCuts ?? null,
     price_per_cut:   job.pricePerCut ?? null,
+    total:           job.total ?? null,
+    service_items:   job.serviceItems ?? null,
     dispatched_at:    job.dispatchedAt ?? null,
     arrived_at:       job.arrivedAt ?? null,
     completed_at:     job.completedAt ?? null,
@@ -63,6 +73,8 @@ function fromRow(row: Record<string, unknown>): Job {
     planCutNumber:  (row.plan_cut_number as number) ?? undefined,
     planTotalCuts:  (row.plan_total_cuts as number) ?? undefined,
     pricePerCut:    (row.price_per_cut as number) ?? undefined,
+    total:          row.total != null ? Number(row.total) : null,
+    serviceItems:   (row.service_items as JobLineItem[]) ?? null,
     dispatchedAt:    (row.dispatched_at as string) ?? null,
     arrivedAt:       (row.arrived_at as string) ?? null,
     completedAt:     (row.completed_at as string) ?? null,

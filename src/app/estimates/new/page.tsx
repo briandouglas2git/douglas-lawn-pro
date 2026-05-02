@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Check, CalendarDays, Layers } from "lucide-react";
 import { getCustomers, type Customer } from "@/lib/customers";
 import { saveEstimate, calculateTotal, makeOptionId, type LineItem, type EstimateOption } from "@/lib/estimates";
-import { saveService } from "@/lib/services";
+import { getSettings, type Settings } from "@/lib/settings";
 import ServicePicker from "@/components/ServicePicker";
 
 const TIER_LABELS = ["Good", "Better", "Best"];
@@ -16,6 +16,7 @@ function NewEstimateForm() {
   const preselected  = searchParams.get("customer") ?? "";
 
   const [customers,  setCustomers]  = useState<Customer[]>([]);
+  const [settings,   setSettings]   = useState<Settings | null>(null);
   const [isPlan,     setIsPlan]     = useState(false);
   const [customerId, setCustomerId] = useState(preselected);
   const [tiered,     setTiered]     = useState(false);
@@ -29,6 +30,17 @@ function NewEstimateForm() {
   const [submitted,  setSubmitted]  = useState(false);
 
   useEffect(() => { getCustomers().then(setCustomers); }, []);
+  useEffect(() => {
+    getSettings().then(s => {
+      setSettings(s);
+      // Default plan items now reflect saved settings instead of hardcoded 23/$65
+      setPlanItems([{
+        description: "Weekly Mowing (per cut)",
+        qty:         s.defaultPlanWeeks,
+        price:       s.defaultCutPrice,
+      }]);
+    });
+  }, []);
 
   const selectedCustomer = customers.find(c => c.id === customerId);
   const planTotal       = calculateTotal(planItems);
@@ -39,7 +51,8 @@ function NewEstimateForm() {
     setIsPlan(on);
     if (on) {
       setTiered(false);
-      setNotes("Includes 23 weekly cuts. Auto-invoiced after each completed cut. Card on file required.");
+      const weeks = settings?.defaultPlanWeeks ?? 23;
+      setNotes(`Includes ${weeks} weekly cuts. Auto-invoiced after each completed cut. Card on file required.`);
     }
   }
 
@@ -84,12 +97,6 @@ function NewEstimateForm() {
     ));
   }
 
-  async function saveAsService(item: LineItem) {
-    if (!item.description || item.price <= 0) return;
-    try { await saveService({ name: item.description, defaultPrice: item.price, defaultQty: item.qty }); }
-    catch { /* duplicate is fine */ }
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!customerId || !selectedCustomer) return;
@@ -97,10 +104,11 @@ function NewEstimateForm() {
     try {
       let payload;
       if (isPlan) {
+        const weeks = planItems[0]?.qty ?? settings?.defaultPlanWeeks ?? 23;
         payload = {
           customerId,
           customerName: selectedCustomer.name,
-          description:  "23-Week Lawn Care Plan",
+          description:  `${weeks}-Week Lawn Care Plan`,
           items:        planItems,
           options:      null,
           selectedOptionId: null,
@@ -177,7 +185,9 @@ function NewEstimateForm() {
           <CalendarDays size={20} color={isPlan ? "#fff" : "#A07840"} />
         </div>
         <div className="flex-1">
-          <p className="text-sm font-semibold text-[#1a1a1a]">23-Week Lawn Care Plan</p>
+          <p className="text-sm font-semibold text-[#1a1a1a]">
+            {settings?.defaultPlanWeeks ?? 23}-Week Lawn Care Plan
+          </p>
           <p className="text-xs text-[#6b7280]">Auto-schedule weekly cuts · Auto-invoice each one</p>
         </div>
         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
@@ -290,7 +300,6 @@ function NewEstimateForm() {
                       <label className="text-[10px] text-[#6b7280]">Price ($)</label>
                       <input type="number" min={0} step={0.01} value={item.price}
                         onChange={e => updateItem(opt.id, index, "price", Number(e.target.value))}
-                        onBlur={() => saveAsService(item)}
                         className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
                     </div>
                     <div className="flex-1">

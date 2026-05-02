@@ -149,12 +149,14 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
         : activeItems.map(i => i.description).join(", ");
       await saveJob({
         ...customerInfo,
-        service:  serviceLabel,
-        date:     startDate,
-        time:     time || "",
-        notes:    est.notes,
-        status:   "scheduled" as const,
-        isPlan:   false,
+        service:      serviceLabel,
+        date:         startDate,
+        time:         time || "",
+        notes:        est.notes,
+        status:       "scheduled" as const,
+        isPlan:       false,
+        total:        activeTotal,
+        serviceItems: activeItems,
       });
     }
 

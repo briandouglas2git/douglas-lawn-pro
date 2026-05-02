@@ -5,7 +5,6 @@ import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Check } from "lucide-react";
 import { getCustomers, type Customer } from "@/lib/customers";
 import { saveInvoice } from "@/lib/invoices";
-import { saveService } from "@/lib/services";
 import { calculateTotal, type LineItem } from "@/lib/estimates";
 import ServicePicker from "@/components/ServicePicker";
 
@@ -114,11 +113,6 @@ function NewInvoiceForm() {
                 <label className="text-[10px] text-[#6b7280]">Price ($)</label>
                 <input type="number" min={0} step={0.01} value={item.price}
                   onChange={e => updateItem(index, "price", Number(e.target.value))}
-                  onBlur={async () => {
-                    if (item.description && item.price > 0) {
-                      try { await saveService({ name: item.description, defaultPrice: item.price, defaultQty: item.qty }); } catch {}
-                    }
-                  }}
                   className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2 outline-none focus:border-[#C9A96E]" />
               </div>
               <div className="flex-1">

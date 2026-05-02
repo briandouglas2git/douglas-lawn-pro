@@ -106,26 +106,36 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
     await updateJobStatus(id, "completed");
     setJob(prev => prev ? { ...prev, status: "completed", completedAt: new Date().toISOString() } : prev);
 
-    // Auto-create invoice for plan jobs
+    // Decide invoice line items + total based on job type
+    let lineItems: { description: string; qty: number; price: number }[] | null = null;
+    let total = 0;
+
     if (job.isPlan && job.pricePerCut) {
+      lineItems = [{
+        description: `${job.service} (Cut ${job.planCutNumber} of ${job.planTotalCuts})`,
+        qty:         1,
+        price:       job.pricePerCut,
+      }];
+      total = job.pricePerCut;
+    } else if (!job.isPlan && job.serviceItems && job.serviceItems.length > 0) {
+      lineItems = job.serviceItems;
+      total = job.total ?? job.serviceItems.reduce((s, i) => s + i.qty * i.price, 0);
+    }
+
+    if (lineItems && total > 0) {
       try {
         const inv = await saveInvoice({
           jobId:        job.id,
           customerId:   job.customerId,
           customerName: job.customerName,
-          lineItems:    [{
-            description: `${job.service} (Cut ${job.planCutNumber} of ${job.planTotalCuts})`,
-            qty:         1,
-            price:       job.pricePerCut,
-          }],
-          total:        job.pricePerCut,
+          lineItems,
+          total,
           status:       "sent",
           sentAt:       new Date().toISOString(),
           paidAt:       null,
         });
         await setJobInvoice(job.id, inv.id);
 
-        // Send auto-invoice notification
         await fetch("/api/invoice", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -133,13 +143,13 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             customerName:  job.customerName,
             customerPhone: job.customerPhone,
             service:       job.service,
-            amount:        job.pricePerCut,
+            amount:        total,
             cutNumber:     job.planCutNumber,
             totalCuts:     job.planTotalCuts,
             afterPhotoUrl: job.afterPhotoUrl,
           }),
         });
-        setToast(`Auto-invoiced $${job.pricePerCut.toFixed(2)} to ${job.customerName}`);
+        setToast(`Auto-invoiced $${total.toFixed(2)} to ${job.customerName}`);
       } catch {
         setToast("Job completed but invoice failed to send");
       }

@@ -4,8 +4,11 @@ import Link from "next/link";
 import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight } from "lucide-react";
 import { getSettings, updateSettings, type Settings } from "@/lib/settings";
 
+interface Health { twilio: boolean; resend: boolean; stripe: boolean; }
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [health,   setHealth]   = useState<Health | null>(null);
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [saved,    setSaved]    = useState(false);
@@ -14,6 +17,7 @@ export default function SettingsPage() {
     getSettings()
       .then(setSettings)
       .finally(() => setLoading(false));
+    fetch("/api/health").then(r => r.json()).then(setHealth).catch(() => {});
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -98,22 +102,27 @@ export default function SettingsPage() {
       <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
         <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide mb-2">Integrations</p>
         <div className="flex flex-col gap-2 text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[#6b7280]">Twilio (SMS)</span>
-            <span className="text-xs font-semibold text-gray-300">Not connected</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[#6b7280]">Stripe (Payments)</span>
-            <span className="text-xs font-semibold text-gray-300">Not connected</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[#6b7280]">Resend (Email)</span>
-            <span className="text-xs font-semibold text-gray-300">Not connected</span>
-          </div>
+          {[
+            { label: "Twilio (SMS)",       on: health?.twilio },
+            { label: "Stripe (Payments)",  on: health?.stripe },
+            { label: "Resend (Email)",     on: health?.resend },
+          ].map(({ label, on }) => (
+            <div key={label} className="flex items-center justify-between">
+              <span className="text-[#6b7280]">{label}</span>
+              <span className={`text-xs font-semibold flex items-center gap-1 ${
+                on ? "text-[#16A34A]" : "text-gray-300"
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-[#16A34A]" : "bg-gray-300"}`} />
+                {on ? "Connected" : "Not connected"}
+              </span>
+            </div>
+          ))}
         </div>
-        <p className="text-xs text-[#6b7280] mt-3">
-          Until these are connected, customer texts will show a preview only.
-        </p>
+        {!health?.twilio && (
+          <p className="text-xs text-[#6b7280] mt-3">
+            Until Twilio is connected, customer texts will show a preview only.
+          </p>
+        )}
       </div>
 
       <button type="submit" disabled={saving}

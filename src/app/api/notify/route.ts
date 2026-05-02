@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
+function toE164(phone: string): string | null {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (phone.startsWith("+") && digits.length >= 10) return `+${digits}`;
+  return null;
+}
+
 const MESSAGES = {
   dispatch: (name: string) =>
     `Hi ${name}! Brian from Douglas Landscaping Co. is on his way to your property. See you soon! 🌿`,
@@ -32,6 +40,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ preview: true, message: buildMessage() });
   }
 
+  const to = toE164(customerPhone);
+  if (!to) {
+    return NextResponse.json({ error: `Invalid phone number: ${customerPhone}` }, { status: 400 });
+  }
+
   const twilio = (await import("twilio")).default;
   const client = twilio(sid, token);
   const body = buildMessage();
@@ -40,6 +53,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unknown notification type" }, { status: 400 });
   }
 
-  const message = await client.messages.create({ body, from, to: customerPhone });
-  return NextResponse.json({ success: true, sid: message.sid });
+  try {
+    const message = await client.messages.create({ body, from, to });
+    return NextResponse.json({ success: true, sid: message.sid });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to send SMS";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }

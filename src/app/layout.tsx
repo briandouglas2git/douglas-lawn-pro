@@ -32,7 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen bg-[#FAFAF7]">
-        <main className="pb-20 max-w-lg mx-auto min-h-screen">
+        <main
+          className="max-w-lg mx-auto min-h-screen"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 5rem)" }}
+        >
           {children}
         </main>
         <BottomNav />

@@ -10,8 +10,11 @@ const tabs = [
   { href: "/invoices",  label: "Invoices",  Icon: FileText         },
 ];
 
+const HIDE_ON = ["/login"];
+
 export default function BottomNav() {
   const path = usePathname();
+  if (HIDE_ON.some(p => path.startsWith(p))) return null;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#ede8df] z-50">

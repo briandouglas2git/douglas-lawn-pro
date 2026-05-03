@@ -1,17 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight, LogOut } from "lucide-react";
 import { getSettings, updateSettings, type Settings } from "@/lib/settings";
+import { supabase } from "@/lib/supabase";
 
 interface Health { twilio: boolean; resend: boolean; stripe: boolean; }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [health,   setHealth]   = useState<Health | null>(null);
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [saved,    setSaved]    = useState(false);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
 
   useEffect(() => {
     getSettings()
@@ -128,6 +137,11 @@ export default function SettingsPage() {
       <button type="submit" disabled={saving}
         className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40 flex items-center justify-center gap-2">
         {saved ? <><Check size={16} /> Saved</> : saving ? "Saving…" : "Save Settings"}
+      </button>
+
+      <button type="button" onClick={signOut}
+        className="bg-white border border-[#ede8df] text-[#6b7280] rounded-2xl py-3 font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+        <LogOut size={14} /> Sign Out
       </button>
     </form>
   );

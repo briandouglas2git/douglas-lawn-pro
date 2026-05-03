@@ -42,17 +42,36 @@ export default function SchedulePage() {
     const tomorrow = dateOffset(1);
     const weekEnd  = dateOffset(7);
 
-    const upcoming = jobs.filter(j => j.status !== "completed").sort((a, b) => a.date.localeCompare(b.date));
+    // Sort by date, then by time within the same date
+    const sortByDateTime = (a: Job, b: Job) =>
+      a.date === b.date
+        ? (a.time || "00:00").localeCompare(b.time || "00:00")
+        : a.date.localeCompare(b.date);
+
+    const upcoming = jobs.filter(j => j.status !== "completed").sort(sortByDateTime);
+
+    // Group "this week" jobs (day after tomorrow → 7 days out) by their date
+    const thisWeekJobs = upcoming.filter(j => j.date > tomorrow && j.date <= weekEnd);
+    const byDay        = new Map<string, Job[]>();
+    for (const job of thisWeekJobs) {
+      if (!byDay.has(job.date)) byDay.set(job.date, []);
+      byDay.get(job.date)!.push(job);
+    }
 
     return {
       overdue:  upcoming.filter(j => j.date <  today),
       today:    upcoming.filter(j => j.date === today),
       tomorrow: upcoming.filter(j => j.date === tomorrow),
-      thisWeek: upcoming.filter(j => j.date >  tomorrow && j.date <= weekEnd),
+      thisWeekByDay: Array.from(byDay.entries()), // [[date, jobs], ...] already sorted
       later:    upcoming.filter(j => j.date >  weekEnd),
       done:     jobs.filter(j => j.status === "completed").sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10),
     };
   }, [jobs]);
+
+  function dayHeader(dateStr: string) {
+    const d = new Date(dateStr + "T12:00:00");
+    return d.toLocaleDateString("en-CA", { weekday: "long", month: "short", day: "numeric" });
+  }
 
   function JobCard({ job }: { job: Job }) {
     const badge = STATUS_COLORS[job.status] ?? STATUS_COLORS.scheduled;
@@ -128,11 +147,15 @@ export default function SchedulePage() {
 
       {!loading && (
         <>
-          <Section title="Overdue"   jobs={groups.overdue}  accent="#DC2626" />
-          <Section title="Today"     jobs={groups.today}    accent="#A07840" />
-          <Section title="Tomorrow"  jobs={groups.tomorrow} />
-          <Section title="This Week" jobs={groups.thisWeek} />
-          <Section title="Later"     jobs={groups.later} />
+          <Section title="Overdue"  jobs={groups.overdue}  accent="#DC2626" />
+          <Section title="Today"    jobs={groups.today}    accent="#A07840" />
+          <Section title="Tomorrow" jobs={groups.tomorrow} />
+
+          {groups.thisWeekByDay.map(([date, jobsForDay]) => (
+            <Section key={date} title={dayHeader(date)} jobs={jobsForDay} />
+          ))}
+
+          <Section title="Later"    jobs={groups.later} />
 
           {groups.done.length > 0 && (
             <div className="mb-5">

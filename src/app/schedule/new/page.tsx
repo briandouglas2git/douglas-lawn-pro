@@ -25,6 +25,7 @@ function NewJobForm() {
   const [notes,       setNotes]       = useState("");
   const [saving,      setSaving]      = useState(false);
   const [submitted,   setSubmitted]   = useState(false);
+  const [error,       setError]       = useState("");
 
   useEffect(() => { getCustomers().then(setCustomers); }, []);
 
@@ -34,6 +35,7 @@ function NewJobForm() {
     const c = customers.find(x => x.id === customerId);
     if (!c) return;
     setSaving(true);
+    setError("");
     try {
       await saveJob({
         customerName:  c.name,
@@ -49,7 +51,8 @@ function NewJobForm() {
       });
       setSubmitted(true);
       setTimeout(() => router.push("/schedule"), 1200);
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save. Try again.");
       setSaving(false);
     }
   }
@@ -118,6 +121,12 @@ function NewJobForm() {
           placeholder="Anything to know for this job…" rows={3}
           className="mt-1 text-sm text-[#1a1a1a] outline-none bg-transparent resize-none placeholder:text-gray-300" />
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-3 text-sm">
+          {error}
+        </div>
+      )}
 
       <button type="submit" disabled={saving}
         className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40">

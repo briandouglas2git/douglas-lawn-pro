@@ -18,6 +18,7 @@ function NewInvoiceForm() {
   const [items,      setItems]      = useState<LineItem[]>([{ description: "", qty: 1, price: 0 }]);
   const [saving,     setSaving]     = useState(false);
   const [submitted,  setSubmitted]  = useState(false);
+  const [error,      setError]      = useState("");
 
   useEffect(() => { getCustomers().then(setCustomers); }, []);
 
@@ -45,7 +46,8 @@ function NewInvoiceForm() {
       });
       setSubmitted(true);
       setTimeout(() => router.push(`/invoices/${inv.id}`), 1000);
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save. Try again.");
       setSaving(false);
     }
   }
@@ -133,6 +135,10 @@ function NewInvoiceForm() {
         <p className="text-sm font-semibold text-[#A07840]">Total</p>
         <p className="text-xl font-bold text-[#A07840]">${total.toFixed(2)}</p>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-3 text-sm">{error}</div>
+      )}
 
       <button type="submit" disabled={saving}
         className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40">

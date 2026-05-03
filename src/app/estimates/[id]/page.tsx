@@ -124,6 +124,7 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
       address:       customer?.address ?? "",
     };
 
+    try {
     if (est.isPlan) {
       const d = new Date(startDate + "T12:00:00");
       const planJobs: Omit<Job, "id">[] = Array.from({ length: totalCuts }, (_, i) => {
@@ -162,6 +163,11 @@ export default function EstimateDetail({ params }: { params: Promise<{ id: strin
 
     await updateEstimateStatus(id, "booked");
     setBooked(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Booking failed. Try again.";
+      setToast(msg);
+      setTimeout(() => setToast(""), 6000);
+    }
   }
 
   if (booked) {

@@ -14,16 +14,19 @@ export default function NewCustomerPage() {
   const [notes,   setNotes]   = useState("");
   const [saving,    setSaving]    = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error,     setError]     = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setSaving(true);
+    setError("");
     try {
       const c = await saveCustomer({ name, phone, email, address, notes });
       setSubmitted(true);
       setTimeout(() => router.push(`/customers/${c.id}`), 1000);
-    } catch {
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save. Try again.");
       setSaving(false);
     }
   }
@@ -81,6 +84,10 @@ export default function NewCustomerPage() {
             className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E] resize-none placeholder:text-gray-300" />
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-300 text-red-700 rounded-2xl p-3 text-sm">{error}</div>
+      )}
 
       <button type="submit" disabled={saving || !name.trim()}
         className="bg-[#C9A96E] text-white rounded-2xl py-4 font-semibold text-sm shadow-md active:scale-95 transition-transform disabled:opacity-40">

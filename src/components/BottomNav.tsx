@@ -19,7 +19,7 @@ export default function BottomNav() {
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#ede8df] z-50"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 28px)" }}
     >
       <div className="max-w-lg mx-auto flex">
         {tabs.map(({ href, label, Icon }) => {

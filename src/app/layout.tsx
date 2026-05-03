@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-[#FAFAF7]">
         <main
           className="max-w-lg mx-auto min-h-screen"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 5rem)" }}
+          style={{ paddingBottom: "calc(max(env(safe-area-inset-bottom), 28px) + 5rem)" }}
         >
           {children}
         </main>

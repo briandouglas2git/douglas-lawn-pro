@@ -6,6 +6,7 @@ export interface Settings {
   baseAddress:      string;
   defaultCutPrice:  number;
   defaultPlanWeeks: number;
+  calendarToken:    string;
 }
 
 const DEFAULT: Settings = {
@@ -14,6 +15,7 @@ const DEFAULT: Settings = {
   baseAddress:      "Paris, Ontario",
   defaultCutPrice:  65,
   defaultPlanWeeks: 23,
+  calendarToken:    "",
 };
 
 function fromRow(row: Record<string, unknown> | null): Settings {
@@ -24,6 +26,7 @@ function fromRow(row: Record<string, unknown> | null): Settings {
     baseAddress:      (row.base_address as string)      ?? DEFAULT.baseAddress,
     defaultCutPrice:  Number(row.default_cut_price ?? DEFAULT.defaultCutPrice),
     defaultPlanWeeks: Number(row.default_plan_weeks ?? DEFAULT.defaultPlanWeeks),
+    calendarToken:    (row.calendar_token as string)    ?? "",
   };
 }
 
@@ -39,7 +42,16 @@ export async function updateSettings(s: Partial<Settings>): Promise<void> {
   if (s.baseAddress !== undefined)      updates.base_address       = s.baseAddress;
   if (s.defaultCutPrice !== undefined)  updates.default_cut_price  = s.defaultCutPrice;
   if (s.defaultPlanWeeks !== undefined) updates.default_plan_weeks = s.defaultPlanWeeks;
+  if (s.calendarToken !== undefined)    updates.calendar_token     = s.calendarToken;
 
   const { error } = await supabase.from("settings").update(updates).eq("id", 1);
   if (error) throw error;
+}
+
+export async function ensureCalendarToken(): Promise<string> {
+  const s = await getSettings();
+  if (s.calendarToken) return s.calendarToken;
+  const token = crypto.randomUUID().replace(/-/g, "");
+  await updateSettings({ calendarToken: token });
+  return token;
 }

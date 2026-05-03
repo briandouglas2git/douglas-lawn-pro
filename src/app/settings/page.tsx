@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight, LogOut } from "lucide-react";
-import { getSettings, updateSettings, type Settings } from "@/lib/settings";
+import { ArrowLeft, Check, Settings as SettingsIcon, Wrench, ChevronRight, LogOut, Calendar, Copy, RefreshCw } from "lucide-react";
+import { getSettings, updateSettings, ensureCalendarToken, type Settings } from "@/lib/settings";
 import { supabase } from "@/lib/supabase";
 
 interface Health { twilio: boolean; resend: boolean; stripe: boolean; }
@@ -20,6 +20,29 @@ export default function SettingsPage() {
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  }
+
+  const [calendarUrl, setCalendarUrl] = useState("");
+  const [copied,      setCopied]      = useState(false);
+
+  useEffect(() => {
+    ensureCalendarToken().then(token => {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      setCalendarUrl(`${origin}/api/calendar?token=${token}`);
+    }).catch(() => {});
+  }, []);
+
+  async function regenerateToken() {
+    if (!confirm("Regenerate? Your old calendar subscription will stop working — you'll need to re-add it in Google Calendar.")) return;
+    const token = crypto.randomUUID().replace(/-/g, "");
+    await updateSettings({ calendarToken: token });
+    setCalendarUrl(`${window.location.origin}/api/calendar?token=${token}`);
+  }
+
+  function copyUrl() {
+    navigator.clipboard.writeText(calendarUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   useEffect(() => {
@@ -94,6 +117,40 @@ export default function SettingsPage() {
             onChange={e => setSettings({ ...settings, defaultPlanWeeks: Number(e.target.value) })}
             className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]" />
         </div>
+      </div>
+
+      {/* Calendar sync */}
+      <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <Calendar size={14} className="text-[#C9A96E]" />
+          <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">Calendar Sync</p>
+        </div>
+        <p className="text-xs text-[#6b7280] mb-3">
+          Subscribe to this URL in Google Calendar (or Apple Calendar) and your scheduled jobs appear there automatically. Updates every few hours.
+        </p>
+        <div className="flex gap-2">
+          <input type="text" value={calendarUrl} readOnly
+            className="flex-1 text-[10px] text-[#1a1a1a] border border-[#ede8df] rounded-xl px-2 py-2 outline-none font-mono truncate" />
+          <button type="button" onClick={copyUrl}
+            className="bg-[#C9A96E] text-white rounded-xl px-3 py-2 text-xs font-semibold flex items-center gap-1">
+            {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+          </button>
+        </div>
+        <details className="mt-3">
+          <summary className="text-xs font-semibold text-[#A07840] cursor-pointer">How to add to Google Calendar</summary>
+          <ol className="text-xs text-[#6b7280] mt-2 list-decimal pl-5 space-y-1">
+            <li>Copy the URL above</li>
+            <li>Open <strong>Google Calendar</strong> on a computer (not the phone app)</li>
+            <li>On the left sidebar, click the <strong>+</strong> next to <strong>Other calendars</strong></li>
+            <li>Choose <strong>From URL</strong></li>
+            <li>Paste the URL → <strong>Add calendar</strong></li>
+            <li>Done — appears in Google Calendar on every device</li>
+          </ol>
+        </details>
+        <button type="button" onClick={regenerateToken}
+          className="text-xs text-[#6b7280] mt-2 flex items-center gap-1">
+          <RefreshCw size={11} /> Regenerate URL (if it leaks)
+        </button>
       </div>
 
       <Link href="/services"

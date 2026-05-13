@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { getJob, updateJobStatus, setJobInvoice, type Job } from "@/lib/jobs";
 import { saveInvoice } from "@/lib/invoices";
+import { getCustomer } from "@/lib/customers";
 import JobPhotoSlot from "@/components/JobPhotoSlot";
 
 const STATUS_LABELS = {
@@ -136,6 +137,7 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
         });
         await setJobInvoice(job.id, inv.id);
 
+        // SMS invoice notification
         await fetch("/api/invoice", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -149,11 +151,35 @@ export default function JobDetail({ params }: { params: Promise<{ id: string }> 
             afterPhotoUrl: job.afterPhotoUrl,
           }),
         });
-        setToast(`Auto-invoiced $${total.toFixed(2)} to ${job.customerName}`);
+
+        // Email invoice — only if customer has an email on file
+        const customer = await getCustomer(job.customerId);
+        let emailMsg = "";
+        if (customer?.email) {
+          try {
+            const res = await fetch("/api/email-invoice", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                customerName:  job.customerName,
+                customerEmail: customer.email,
+                service:       job.service,
+                amount:        total,
+                lineItems,
+                afterPhotoUrl: job.afterPhotoUrl,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) emailMsg = " + email";
+            else if (data.preview) emailMsg = " (email preview only)";
+          } catch { /* SMS already sent — non-fatal */ }
+        }
+
+        setToast(`Auto-invoiced $${total.toFixed(2)} via text${emailMsg} to ${job.customerName}`);
       } catch {
         setToast("Job completed but invoice failed to send");
       }
-      setTimeout(() => setToast(""), 5000);
+      setTimeout(() => setToast(""), 6000);
     }
   }
 

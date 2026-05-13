@@ -1,19 +1,19 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Users, CalendarDays, FileText, ClipboardList, Settings as SettingsIcon, MessageSquare } from "lucide-react";
+import { Users, CalendarDays, FileText, ClipboardList, Settings as SettingsIcon, MessageSquare, Sprout } from "lucide-react";
 import { getJobs } from "@/lib/jobs";
 import { getCustomers } from "@/lib/customers";
 import { getInvoices } from "@/lib/invoices";
 import { getSettings, type Settings } from "@/lib/settings";
 
 const cards = [
-  { href: "/customers", label: "Customers",  sub: "View & manage",         Icon: Users,         bg: "#F5ECD7", color: "#A07840" },
-  { href: "/schedule",  label: "Schedule",   sub: "Jobs & appointments",    Icon: CalendarDays,  bg: "#F5ECD7", color: "#A07840" },
-  { href: "/invoices",  label: "Invoices",   sub: "Send & track",           Icon: FileText,      bg: "#FDF6EC", color: "#C9A96E" },
-  { href: "/estimates", label: "Estimates",  sub: "Quotes for future work", Icon: ClipboardList, bg: "#FDF6EC", color: "#C9A96E" },
-  { href: "/messages",  label: "Messages",   sub: "Edit & send texts",      Icon: MessageSquare, bg: "#F5ECD7", color: "#A07840" },
-  { href: "/services",  label: "Services",   sub: "Your price book",        Icon: FileText,      bg: "#FDF6EC", color: "#C9A96E" },
+  { href: "/mowing",    label: "Mowing Roster", sub: "Weekly customers by day",  Icon: Sprout,        bg: "#DCFCE7", color: "#16A34A" },
+  { href: "/schedule",  label: "Schedule",      sub: "Today's jobs",             Icon: CalendarDays,  bg: "#F5ECD7", color: "#A07840" },
+  { href: "/customers", label: "Customers",     sub: "View & manage",            Icon: Users,         bg: "#F5ECD7", color: "#A07840" },
+  { href: "/invoices",  label: "Invoices",      sub: "Send & track",             Icon: FileText,      bg: "#FDF6EC", color: "#C9A96E" },
+  { href: "/estimates", label: "Estimates",     sub: "Quotes for future work",   Icon: ClipboardList, bg: "#FDF6EC", color: "#C9A96E" },
+  { href: "/messages",  label: "Messages",      sub: "Edit & send texts",        Icon: MessageSquare, bg: "#F5ECD7", color: "#A07840" },
 ];
 
 function greeting() {

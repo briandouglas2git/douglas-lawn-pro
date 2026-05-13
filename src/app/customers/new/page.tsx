@@ -12,6 +12,9 @@ export default function NewCustomerPage() {
   const [email,   setEmail]   = useState("");
   const [address, setAddress] = useState("");
   const [notes,   setNotes]   = useState("");
+  const [mowingFrequency, setMowingFrequency] = useState<"none" | "weekly" | "biweekly">("none");
+  const [mowingDay,       setMowingDay]       = useState<"" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun">("");
+  const [mowingPrice,     setMowingPrice]     = useState("");
   const [saving,    setSaving]    = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error,     setError]     = useState("");
@@ -22,7 +25,12 @@ export default function NewCustomerPage() {
     setSaving(true);
     setError("");
     try {
-      const c = await saveCustomer({ name, phone, email, address, notes });
+      const c = await saveCustomer({
+        name, phone, email, address, notes,
+        mowingFrequency,
+        mowingDay:   mowingDay || null,
+        mowingPrice: mowingPrice ? Number(mowingPrice) : null,
+      });
       setSubmitted(true);
       setTimeout(() => router.push(`/customers/${c.id}`), 1000);
     } catch (err) {
@@ -83,6 +91,50 @@ export default function NewCustomerPage() {
             rows={3}
             className="mt-1.5 w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E] resize-none placeholder:text-gray-300" />
         </div>
+      </div>
+
+      {/* Mowing subscription */}
+      <div className="bg-white rounded-2xl p-4 border border-[#ede8df] shadow-sm flex flex-col gap-3">
+        <p className="text-xs font-semibold text-[#C9A96E] uppercase tracking-wide">🌿 Mowing Customer?</p>
+        <p className="text-xs text-[#6b7280] -mt-2">If they get recurring lawn mowing, set this so they show up on your Mowing Roster.</p>
+
+        <div>
+          <label className="text-xs text-[#6b7280] block mb-1">Frequency</label>
+          <select value={mowingFrequency}
+            onChange={e => setMowingFrequency(e.target.value as "none" | "weekly" | "biweekly")}
+            className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]">
+            <option value="none">Not a mowing customer</option>
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Bi-weekly</option>
+          </select>
+        </div>
+
+        {mowingFrequency !== "none" && (
+          <>
+            <div>
+              <label className="text-xs text-[#6b7280] block mb-1">Mow day</label>
+              <select value={mowingDay}
+                onChange={e => setMowingDay(e.target.value as typeof mowingDay)}
+                className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]">
+                <option value="">Pick a day…</option>
+                <option value="Mon">Monday</option>
+                <option value="Tue">Tuesday</option>
+                <option value="Wed">Wednesday</option>
+                <option value="Thu">Thursday</option>
+                <option value="Fri">Friday</option>
+                <option value="Sat">Saturday</option>
+                <option value="Sun">Sunday</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-[#6b7280] block mb-1">Price per cut ($)</label>
+              <input type="number" min={0} step={0.01} value={mowingPrice}
+                onChange={e => setMowingPrice(e.target.value)}
+                placeholder="65"
+                className="w-full text-sm text-[#1a1a1a] border border-[#ede8df] rounded-xl px-3 py-2.5 outline-none focus:border-[#C9A96E]" />
+            </div>
+          </>
+        )}
       </div>
 
       {error && (
